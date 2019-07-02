@@ -2,7 +2,9 @@ StructureNet: Hierarchical Graph Networks for 3D Shape Generation
 
 The MIT License (MIT)
 
-Copyright (c) 2019 Kaichun Mo, Paul Guerrero, Li Yi, Hao Su, Peter Wonka, Niloy Mitra, Leonidas J. Guibas from Stanford University, University College London (UCL), University of California San Diego (UCSD), King Abdullah University of Science and Technology (KAUST)
+Copyright (c) 2019 Kaichun Mo, Paul Guerrero, Li Yi, Hao Su, Peter Wonka, 
+Niloy Mitra, Leonidas J. Guibas from Stanford University, University College London (UCL), 
+University of California San Diego (UCSD), King Abdullah University of Science and Technology (KAUST)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
