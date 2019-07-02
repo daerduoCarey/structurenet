@@ -1,9 +1,14 @@
+"""
+    This file contains all helper utility functions.
+"""
+
 import os
 import sys
 import math
 import importlib
 from scipy.optimize import linear_sum_assignment
 import torch
+
 
 def save_checkpoint(models, model_names, dirname, epoch=None, prepend_epoch=False, optimizers=None, optimizer_names=None):
 
@@ -24,6 +29,7 @@ def save_checkpoint(models, model_names, dirname, epoch=None, prepend_epoch=Fals
         for opt, optimizer_name in zip(optimizers, optimizer_names):
             checkpt[f'opt_{optimizer_name}'] = opt.state_dict()
         torch.save(checkpt, os.path.join(dirname, filename))
+
 
 def load_checkpoint(models, model_names, dirname, epoch=None, optimizers=None, optimizer_names=None, strict=True):
 
@@ -54,11 +60,13 @@ def load_checkpoint(models, model_names, dirname, epoch=None, optimizers=None, o
 
     return start_epoch
 
+
 def optimizer_to_device(optimizer, device):
     for state in optimizer.state.values():
         for k, v in state.items():
             if torch.is_tensor(v):
                 state[k] = v.to(device)
+
 
 def vrrotvec2mat(rotvector):
     s = math.sin(rotvector[3])
@@ -70,6 +78,7 @@ def vrrotvec2mat(rotvector):
     m = rotvector.new_tensor([[t*x*x+c, t*x*y-s*z, t*x*z+s*y], [t*x*y+s*z, t*y*y+c, t*y*z-s*x], [t*x*z-s*y, t*y*z+s*x, t*z*z+c]])
     return m
 
+
 def get_model_module(version=''):
     if version == '':
         module_name = 'models'
@@ -77,6 +86,7 @@ def get_model_module(version=''):
         module_name = f'models_{version}'
     importlib.invalidate_caches()
     return importlib.import_module(module_name)
+
 
 # row_counts, col_counts: row and column counts of each distance matrix (assumed to be full if given)
 def linear_assignment(distance_mat, row_counts=None, col_counts=None):
@@ -113,6 +123,7 @@ def linear_assignment(distance_mat, row_counts=None, col_counts=None):
 
     return batch_ind, row_ind, col_ind
 
+
 def object_batch_boxes(objects, max_box_num):
 
     box_num = []
@@ -129,10 +140,32 @@ def object_batch_boxes(objects, max_box_num):
 
     return boxes, box_num
 
+
 # out shape: (label_count, in shape)
 def one_hot(inp, label_count):
     out = torch.zeros(label_count, inp.numel(), dtype=torch.uint8, device=inp.device)
     out[inp.view(-1), torch.arange(out.shape[1])] = 1
     out = out.view((label_count,) + inp.shape)
     return out
+
+
+def export_ply_with_label(out, v, l):
+    num_colors = len(colors)
+    with open(out, 'w') as fout:
+        fout.write('ply\n');
+        fout.write('format ascii 1.0\n');
+        fout.write('element vertex '+str(v.shape[0])+'\n');
+        fout.write('property float x\n');
+        fout.write('property float y\n');
+        fout.write('property float z\n');
+        fout.write('property uchar red\n');
+        fout.write('property uchar green\n');
+        fout.write('property uchar blue\n');
+        fout.write('end_header\n');
+
+        for i in range(v.shape[0]):
+            cur_color = colors[l[i]%num_colors]
+            fout.write('%f %f %f %d %d %d\n' % (v[i, 0], v[i, 1], v[i, 2], \
+                    int(cur_color[0]*255), int(cur_color[1]*255), int(cur_color[2]*255)))
+
 

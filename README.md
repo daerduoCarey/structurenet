@@ -36,7 +36,7 @@ This repository provides data and code as follows.
 ```
     data/                   # contains data
     exps/                   # contains code
-
+    stats/                  # contains stats
 ```
 
 ## Questions

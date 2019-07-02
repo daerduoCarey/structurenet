@@ -4,14 +4,10 @@ from collections import namedtuple
 import json
 import torch
 import numpy as np
-import apted # https://pypi.org/project/apted/
 from torch.utils import data
 from pyquaternion import Quaternion
 from sklearn.decomposition import PCA
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(BASE_DIR, 'utils'))
-from geometry_utils import export_ply_with_label
-from utils import one_hot
+from utils import one_hot, export_ply_with_label
 import trimesh
 
 # load Chair.txt meta-file
