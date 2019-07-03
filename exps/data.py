@@ -1,62 +1,73 @@
 import sys
 import os
-from collections import namedtuple
 import json
 import torch
 import numpy as np
 from torch.utils import data
 from pyquaternion import Quaternion
 from sklearn.decomposition import PCA
+from collections import namedtuple
 from utils import one_hot, export_ply_with_label
 import trimesh
 
-# load Chair.txt meta-file
-part_name2id = dict(); part_id2name = dict(); part_name2cids = dict();
-with open('Chair.txt', 'r') as fin:
-    for l in fin.readlines():
-        x, y, _ = l.rstrip().split()
-        x = int(x)
-        part_name2id[y] = x
-        part_id2name[x] = y
-        part_name2cids[y] = []
-        if '/' in y:
-            part_name2cids['/'.join(y.split('/')[:-1])].append(x)
-num_sem = len(part_name2id) + 1
-part_non_leaf_sem_names = []
-for k in part_name2cids:
-    part_name2cids[k] = np.array(part_name2cids[k], dtype=np.int32)
-    if len(part_name2cids[k]) > 0:
-        part_non_leaf_sem_names.append(k)
+# load meta-information for the current object category
+part_name2id = dict(); part_id2name = dict(); part_name2cids = dict(); obj_cat = None;
+def load_category_info(cat):
+    obj_cat = cat.lower()
+    with open(os.path.join('../stats/', cat+'.txt'), 'r') as fin:
+        for l in fin.readlines():
+            x, y, _ = l.rstrip().split()
+            x = int(x)
+            part_name2id[y] = x
+            part_id2name[x] = y
+            part_name2cids[y] = []
+            if '/' in y:
+                part_name2cids['/'.join(y.split('/')[:-1])].append(x)
+    num_sem = len(part_name2id) + 1
+    part_non_leaf_sem_names = []
+    for k in part_name2cids:
+        part_name2cids[k] = np.array(part_name2cids[k], dtype=np.int32)
+        if len(part_name2cids[k]) > 0:
+            part_non_leaf_sem_names.append(k)
 
 
+# store a part hierarchy of graphs for a shape
 class Tree(object):
 
+    # store a part node in the tree
     class Node(object):
+
         def __init__(self, part_id=0, is_leaf=False, box=None, label=None, children=None, edges=None, full_label=None, geo=None, geo_feat=None):
-            self.is_leaf = is_leaf        # store T/F for leaf or non-leaf
-            self.part_id = part_id        # part_id in result_after_merging.json (with a special id -1 denoting the unlabeled part if exists for each non-leaf node)
-            self.box = box                # box feature vector for all nodes
-            self.label = label            # node semantic label (with a special label 'other' denoting the unlabeled portion if exists for each non-leaf node)
-            self.full_label = full_label
-            self.children = [] if children is None else children  # all of its children nodes; each entry is a Node instance
-            self.edges = [] if edges is None else edges           # all of its children relationships; each entry is a tuple <part_a, part_b, type, params, dist>
-            self.geo = geo             # 1 x 1000 x 3 point cloud
-            self.geo_feat = geo_feat    # 1 x feat_len
-            self.pred_geo = None
-            self.pred_geo_feat = None
+            self.is_leaf = is_leaf          # store True if the part is a leaf node
+            self.part_id = part_id          # part_id in result_after_merging.json of PartNet
+            self.box = box                  # box parameter for all nodes
+            self.geo = geo                  # 1 x 1000 x 3 point cloud
+            self.label = label              # node semantic label at the current level
+            self.full_label = full_label    # node semantic label from root (separated by slash)
+            self.children = [] if children is None else children
+                                            # all of its children nodes; each entry is a Node instance
+            self.edges = [] if edges is None else edges
+                                            # all of its children relationships; 
+                                            # each entry is a tuple <part_a, part_b, type, params, dist>
             """
-                Edge format:
-                        part_a, part_b: the order in self.children (e.g. 0, 1, 2, 3, ...)
-                                        This is an directional edge for A->B
-                                        If an edge is commutative, you may need to manually specify a B->A edge
-                                        For example, an ADJ edge is only shown A->B, there is no edge B->A
-                        type:           ADJ, ROT_SYM, TRANS_SYM, REF_SYM
-                        dist:           for ADJ edge, it's the closest distance between two parts
-                                        for SYM edge, it's the chamfer distance after matching part B to part A
-                        params:         there is no params field for ADJ edge
-                                        for ROT_SYM edge, 0-2 pivot point, 3-5 axis unit direction, 6 radian rotation angle
-                                        for TRANS_SYM edge, 0-2 translation vector
-                                        for REF_SYM edge, 0-2 the middle point of the segment that connects the two box centers, 3-5 unit normal direction of the reflection plane
+                Here defines the edges format:
+                    part_a, part_b:
+                        Values are the order in self.children (e.g. 0, 1, 2, 3, ...).
+                        This is an directional edge for A->B.
+                        If an edge is commutative, you may need to manually specify a B->A edge.
+                        For example, an ADJ edge is only shown A->B, 
+                        there is no edge B->A in the json file.
+                    type:
+                        Four types considered in StructureNet: ADJ, ROT_SYM, TRANS_SYM, REF_SYM.
+                    params:
+                        There is no params field for ADJ edge;
+                        For ROT_SYM edge, 0-2 pivot point, 3-5 axis unit direction, 6 radian rotation angle;
+                        For TRANS_SYM edge, 0-2 translation vector;
+                        For REF_SYM edge, 0-2 the middle point of the segment that connects the two box centers, 
+                            3-5 unit normal direction of the reflection plane.
+                    dist:
+                        For ADJ edge, it's the closest distance between two parts;
+                        For SYM edge, it's the chamfer distance after matching part B to part A.
             """
         
         def get_semantic_id(self):
@@ -92,32 +103,7 @@ class Tree(object):
             box = np.hstack([center, size, rotmat[:, 0].flatten(), rotmat[:, 1].flatten()]).astype(np.float32)
             self.box = torch.from_numpy(box).view(1, -1)
 
-        def compute_box_from_geo(self):
-
-            points = self.geo.cpu().numpy().reshape(-1, 3)
-            try:
-                to_origin, size = trimesh.bounds.oriented_bounds(obj=points, angle_digits=1)
-                center = to_origin[:3, :3].transpose().dot(-to_origin[:3, 3])
-                xdir = to_origin[0, :3]
-                ydir = to_origin[1, :3]
-
-            except scipy.spatial.qhull.QhullError:
-                print('WARNING: falling back to PCA OBB computation since the more accurate minimum OBB computation failed.')
-                center = points.mean(axis=0, keepdims=True)
-                points = points - center
-                center = center[0, :]
-                pca = PCA()
-                pca.fit(points)
-                pcomps = pca.components_
-                points_local = np.matmul(pcomps, points.transpose()).transpose()
-                size = points_local.max(axis=0) - points_local.min(axis=0)
-                xdir = pcomps[0, :]
-                ydir = pcomps[1, :]
-            
-            box = np.hstack([center, size, xdir, ydir]).astype(np.float32)
-            self.box = torch.tensor(box, dtype=torch.float32).view(1, -1)
-
-        def to(self, device):
+       def to(self, device):
             if self.box is not None:
                 self.box = self.box.to(device)
             for edge in self.edges:
@@ -125,12 +111,6 @@ class Tree(object):
                     edge['params'].to(device)
             if self.geo is not None:
                 self.geo = self.geo.to(device)
-            if self.geo_feat is not None:
-                self.geo_feat = self.geo_feat.to(device)
-            if self.pred_geo is not None:
-                self.pred_geo = self.pred_geo.to(device)
-            if self.pred_geo_feat is not None:
-                self.pred_geo_feat = self.pred_geo_feat.to(device)
 
             for child_node in self.children:
                 child_node.to(device)
@@ -159,23 +139,6 @@ class Tree(object):
 
         def __str__(self):
             return self._to_str(0, 0)
-
-        def print_tree(self):
-            d_stack = [0]
-            stack = [self]
-            s = '\n'
-            while len(stack) > 0:
-                node = stack.pop()
-                node_d = d_stack.pop()
-                node_label = node.label if (node.label is not None and len(node.label) > 0) else '<no label>'
-
-                prefix = ''.join([' |']*(node_d-1)+[' ├']*(node_d > 0))
-                s = s + f'{prefix}{Tree.NodeType(node.type.item()).name}:{node_label}\n'
-
-                stack.extend(reversed(node.children))
-                d_stack.extend([node_d+1]*len(node.children))
-
-            return s
 
         def depth_first_traversal(self):
             nodes = []
@@ -218,51 +181,18 @@ class Tree(object):
                     out_nodes.append(node)
             return out_geos, out_nodes
 
-        def release_all_geos(self):
-            nodes = list(self.depth_first_traversal())
-            for node in nodes:
-                node.geo = None
-                node.geo_feat = None
-                node.pred_geo = None
-                node.pred_geo_feat = None
-
-        def pred_geo_feats(self, leafs_only=True):
-            nodes = list(self.depth_first_traversal())
-            out_feats = []; out_nodes = [];
-            for node in nodes:
-                if (not leafs_only or node.is_leaf) and (node.pred_geo_feat is not None):
-                    out_feats.append(node.pred_geo_feat)
-                    out_nodes.append(node)
-            return out_feats, out_nodes
-
-        def gt_and_pred_geos(self, leafs_only=True):
-            nodes = list(self.depth_first_traversal())
-            gt_geos = []; pred_geos = [];
-            for node in nodes:
-                if (not leafs_only or node.is_leaf) and (node.pred_geo is not None) and (node.geo is not None):
-                    gt_geos.append(node.geo)
-                    pred_geos.append(node.pred_geo)
-            return gt_geos, pred_geos
-
-        # compute the full set of boxes (inlcuding those given implicitly by symmetries)
-        # symmetries nodes produce symmetric instances for all boxes in their subtree
         def boxes(self, per_node=False, leafs_only=False):
 
             nodes = list(reversed(self.depth_first_traversal()))
             node_boxesets = []
             boxes_stack = []
             for node in nodes:
-
-                # children are on the stack right (top-most) to left (bottom-most)
                 node_boxes = []
                 for i in range(len(node.children)):
                     node_boxes = boxes_stack.pop() + node_boxes
 
                 if node.box is not None and (not leafs_only or node.is_leaf):
                     node_boxes.append(node.box)
-
-                # if node.sym is not None:
-                #     node_boxes = sym_instances(boxes=node_boxes, s=node.sym)
 
                 if per_node:
                     node_boxesets.append(node_boxes)
@@ -311,12 +241,7 @@ class Tree(object):
 
             return boxes, edges, box_ids
 
-        """ Return:
-                    edge_type:      1 x (NumEdgesx2) x NumTypes if type_onehot else 1 x (NumEdgesx2)
-                    edge_feats:     1 x (NumEdgesx2) x FeatSize if feat_type == 'full_params' or None
-                    edge_indices:   1 x (NumEdgesx2) x 2
-        """
-        def edge_tensors(self, feat_type, feat_size, edge_types, device, type_onehot=True):
+        def edge_tensors(self, edge_types, device, type_onehot=True):
 
             num_edges = len(self.edges)
 
@@ -324,9 +249,6 @@ class Tree(object):
             edge_indices = torch.tensor(
                 [[e['part_a'], e['part_b']] for e in self.edges] + [[e['part_b'], e['part_a']] for e in self.edges],
                 device=device, dtype=torch.long).view(1, num_edges*2, 2)
-
-            if feat_type not in ['type_only', 'full_params']:
-                raise ValueError(f'Unknown edge feature type: {feat_type}.')
 
             # get edge type as tensor
             edge_type = torch.tensor([edge_types.index(edge['type']) for edge in self.edges], device=device, dtype=torch.long)
@@ -336,17 +258,7 @@ class Tree(object):
                 edge_type = edge_type.view(1, num_edges)
             edge_type = torch.cat([edge_type, edge_type], dim=1) # add edges in other direction (symmetric adjacency)
 
-            # get edge features (parameters) as tensor
-            if feat_type in ['full_params']:
-                num_edges = len(self.edges)
-                edge_feats = torch.zeros((1, num_edges*2, 7), device=device, dtype=torch.float32)
-                for ei, edge in enumerate(self.edges):
-                    if 'params' in edge:
-                        edge_feats[0, ei, :edge['params'].size(0)] = edge['params']
-            else:
-                edge_feats = None
-
-            return edge_type, edge_feats, edge_indices
+            return edge_type, edge_indices
 
         def get_subtree_edge_count(self):
             cnt = 0
@@ -357,83 +269,8 @@ class Tree(object):
                 cnt += len(self.edges)
             return cnt
 
-        def sort_by_label(self):
-            if self.children is not None:
-                self.children.sort(key=lambda child: child.label)
-                for cnode in self.children:
-                    cnode.sort_by_label()
 
-        # TODO: graph edit distance with one of these:
-        # https://networkx.github.io/documentation/latest/reference/algorithms/generated/networkx.algorithms.similarity.graph_edit_distance.html#networkx.algorithms.similarity.graph_edit_distance
-        # https://github.com/Jacobe2169/GMatch4py
-        @staticmethod
-        def distance(node1, node2, detailed=False, weights=None):
-
-            if weights is not None:
-                edit_dist_def = Tree.EditDistanceDefinition(
-                    w_delete=weights['delete'],
-                    w_insert=weights['insert'],
-                    w_rename_label=weights['rename_label'],
-                    w_rename_box=weights['rename_box'])
-            else:
-                edit_dist_def = Tree.EditDistanceDefinition()
-
-            apted_tree = apted.APTED(node1, node2, edit_dist_def)
-            edit_dist = apted_tree.compute_edit_distance()
-
-            if detailed:
-                mapping = apted_tree.compute_edit_mapping()
-
-                rename_dist = 0.0
-                delete_dist = 0.0
-                insert_dist = 0.0
-
-                for n1, n2 in mapping:
-                    if n2 is None:
-                        delete_dist += edit_dist_def.delete(n1)
-                    elif n1 is None:
-                        insert_dist += edit_dist_def.insert(n2)
-                    else:
-                        rename_dist += edit_dist_def.rename(n1, n2)
-
-                return edit_dist, rename_dist, delete_dist, insert_dist
-
-            else:
-                return edit_dist
-
-    class EditDistanceDefinition(apted.Config):
-
-        def __init__(self, w_delete=2.0, w_insert=2.0, w_rename_label=100.0, w_rename_box=1.0):
-            self.w_delete = w_delete
-            self.w_insert = w_insert
-            self.w_rename_label = w_rename_label
-            self.w_rename_box = w_rename_box
-
-        # cost for deleting nodes
-        def delete(self, node):
-            return self.w_delete
-
-        # cost for inserting nodes
-        def insert(self, node):
-            return self.w_insert
-
-        # node distance - models are assumed to be normalized!
-        # otherwise the box and sym losses might get larger
-        def rename(self, node1, node2):
-            # type (100 if they are not the same type)
-            dist = int(node1.label != node2.label) * self.w_rename_label
-
-            # box
-            if node1.box is not None and node2.box is not None:
-                dist += (node1.box.cpu() - node2.box.cpu()).pow_(2).mean(dim=1).item() * self.w_rename_box
-
-            return dist
-
-        # get children of a node
-        def children(self, node):
-            return node.children
-
-
+    # functions for class Tree
     def __init__(self, root):
         self.root = root
 
@@ -443,9 +280,6 @@ class Tree(object):
 
     def __str__(self):
         return str(self.root)
-
-    def print_tree(self):
-        return self.root.print_tree()
 
     def depth_first_traversal(self):
         return self.root.depth_first_traversal()
@@ -460,28 +294,19 @@ class Tree(object):
         for node in self.depth_first_traversal():
             del node.geo
             del node.box
-            del node.geo_feat
-            del node.pred_geo_feat
-            del node.pred_geo
             del node
 
-    def sort_by_label(self):
-        self.root.sort_by_label()
 
-    @staticmethod
-    def distance(tree1, tree2, detailed=False, weights=None):
-        return Tree.Node.distance(node1=tree1.root, node2=tree2.root, detailed=detailed, weights=weights)
+# extend torch.data.Dataset class for PartNet
+class PartNetDataset(data.Dataset):
 
-
-class PartNetObbDataset(data.Dataset):
-    def __init__(self, root, object_list, data_features, load_geo=False, load_geo_feat=False):
+    def __init__(self, root, object_list, data_features, load_geo=False):
         self.root = root
         self.data_features = data_features
         self.load_geo = load_geo
-        self.load_geo_feat = load_geo_feat
 
         if isinstance(object_list, str):
-            with open(object_list, 'r') as f:
+            with open(os.path.join(self.root, object_list), 'r') as f:
                 self.object_names = [item.rstrip() for item in f.readlines()]
         else:
             self.object_names = object_list
@@ -489,7 +314,7 @@ class PartNetObbDataset(data.Dataset):
     def __getitem__(self, index):
         if 'object' in self.data_features:
             obj = self.load_object(os.path.join(self.root, self.object_names[index]+'.json'), \
-                    load_geo=self.load_geo, load_geo_feat=self.load_geo_feat)
+                    load_geo=self.load_geo)
 
         data_feats = ()
         for feat in self.data_features:
@@ -507,18 +332,14 @@ class PartNetObbDataset(data.Dataset):
 
     def get_anno_id(self, anno_id):
         obj = self.load_object(os.path.join(self.root, anno_id+'.json'), \
-                load_geo=self.load_geo, load_geo_feat=self.load_geo_feat)
+                load_geo=self.load_geo)
         return obj
 
     @staticmethod
-    def load_object(fn, load_geo=False, load_geo_feat=False):
+    def load_object(fn, load_geo=False):
 
         if load_geo:
-            geo_fn = fn.replace('partnetobb', 'partnetgeo').replace('json', 'npz')
-            geo_data = np.load(geo_fn)
-
-        if load_geo_feat:
-            geo_fn = fn.replace('partnetobb', 'partnetgeofeat').replace('json', 'npz')
+            geo_fn = fn.replace('_hier', '_geo').replace('json', 'npz')
             geo_data = np.load(geo_fn)
 
         with open(fn, 'r') as f:
@@ -543,20 +364,7 @@ class PartNetObbDataset(data.Dataset):
                 label=node_json['label'])
 
             if load_geo:
-                if node_json['id'] >= 0:
-                    node.geo = torch.tensor(geo_data['parts'][node_json['id']], dtype=torch.float32).view(1, -1, 3)
-                else:
-                    parent_id = parent.part_id
-                    other_idx = np.where(geo_data['other_ids'] == parent_id)[0][0]
-                    node.geo = torch.tensor(geo_data['other_parts'][other_idx], dtype=torch.float32).view(1, -1, 3)
-
-            if load_geo_feat:
-                if node_json['id'] >= 0:
-                    node.geo_feat = torch.tensor(geo_data['parts'][node_json['id']], dtype=torch.float32).view(1, -1)
-                else:
-                    parent_id = parent.part_id
-                    other_idx = np.where(geo_data['other_ids'] == parent_id)[0][0]
-                    node.geo_feat = torch.tensor(geo_data['other_parts'][other_idx], dtype=torch.float32).view(1, -1)
+                node.geo = torch.tensor(geo_data['parts'][node_json['id']], dtype=torch.float32).view(1, -1, 3)
 
             if 'box' in node_json:
                 node.box = torch.from_numpy(np.array(node_json['box'])).to(dtype=torch.float32)
@@ -614,10 +422,6 @@ class PartNetObbDataset(data.Dataset):
                 label.append(cur_label)
                 label_id += 1
 
-            if node.geo_feat is not None and node.is_leaf:
-                cur_feat = node.geo_feat.cpu().numpy().reshape(-1)
-                node_json['geo_feat'] = cur_feat.tolist()
-
             if node.box is not None:
                 node_json['box'] = node.box.cpu().numpy().reshape(-1).tolist()
 
@@ -646,51 +450,4 @@ class PartNetObbDataset(data.Dataset):
             pc = np.vstack(pc)
             label = np.hstack(label)
             export_ply_with_label(fn.replace('.json', '.ply'), pc, label)
-
-    @staticmethod
-    def get_child_graph(objects, label, categories, max_node_num, use_labels, skip_single_child=True):
-        node_num = []
-        boxes = torch.zeros(len(objects), 12, max_node_num)
-        adj = torch.zeros(len(objects), max_node_num, max_node_num)
-        if use_labels:
-            labels = torch.zeros(len(objects), len(categories), max_node_num) # one-hot label encoding
-            label_inds = torch.zeros(len(objects), max_node_num, dtype=torch.long) # one-hot label encoding
-        else:
-            labels = None
-            label_inds = None
-        for oi, obj in enumerate(objects):
-
-            parent_node = None
-            for node in obj.depth_first_traversal():
-                if node.label == label:
-                    parent_node = node
-                    break
-
-            if parent_node is None:
-                raise ValueError(f'An object did not have the label {label}.')
-
-            if skip_single_child and len(parent_node.children) == 1:
-                parent_node = parent_node.children[0]
-
-            child_nodes = parent_node.children
-
-            if len(child_nodes) > max_node_num:
-                print(f'WARNING: too many children for an object, removing additional children')
-                child_nodes = child_nodes[:max_node_num]
-
-            node_num.append(len(child_nodes))
-
-            adj_size = min(max_node_num, len(parent_node.children))
-            adj[oi, :adj_size, :adj_size] = parent_node.child_adjacency(typed=False)[:adj_size, :adj_size]
-
-            for ci, child in enumerate(child_nodes):
-                boxes[oi, :, ci] = child.box.view(-1)
-                if use_labels:
-                    labels[oi, categories.index(child.label), ci] = 1
-                    label_inds[oi, ci] = categories.index(child.label)
-
-        return boxes, labels, label_inds, adj, node_num
-
-def collate_feats(b):
-    return list(zip(*b))
 

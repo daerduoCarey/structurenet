@@ -1,3 +1,8 @@
+"""
+    This is the main trainer script for box-represented AE/VAE experiements.
+    Use scripts/train_ae_box_chair.sh or scripts/train_vae_box_chair.sh to run.
+"""
+
 import os
 import time
 import sys
@@ -8,37 +13,39 @@ from argparse import ArgumentParser
 import numpy as np
 import torch
 import torch.utils.data
-from torchfold import Fold
 from config import add_train_vae_args
-from data import GRASSDataset, PartNetDataset, SGenDataset, collate_feats
-from data_partnetobb import PartNetObbDataset
+from data import PartNetDataset
 import utils
 
+# Use 1-4 CPU threads to train.
+# Don't use too many CPU threads, which will slow down the training.
 torch.set_num_threads(2)
 
 def train_vae(conf):
-
-    device = torch.device(conf.device)
-    print(f'Using device: {conf.device}')
-
+    # load network model
     models = utils.get_model_module(version=conf.model_version)
 
-    # check if training run already exists, create model directory
-    if not conf.resume:
-        if os.path.exists(os.path.join(conf.log_path, conf.name)) or \
-           os.path.exists(os.path.join(conf.model_path, conf.name)):
-            response = input('A training run named "%s" already exists, overwrite? (y/n) ' % (conf.name))
-            if response != 'y':
-                sys.exit()
-        if os.path.exists(os.path.join(conf.log_path, conf.name)):
-            shutil.rmtree(os.path.join(conf.log_path, conf.name))
-        if os.path.exists(os.path.join(conf.model_path, conf.name)):
-            shutil.rmtree(os.path.join(conf.model_path, conf.name))
-    if not os.path.exists(os.path.join(conf.model_path, conf.name)):
-        os.makedirs(os.path.join(conf.model_path, conf.name))
+    # check if training run already exists. If so, detect them.
+    if os.path.exists(os.path.join(conf.log_path, conf.exp_name)) or \
+       os.path.exists(os.path.join(conf.model_path, conf.exp_name)):
+        response = input('A training run named "%s" already exists, overwrite? (y/n) ' % (conf.exp_name))
+        if response != 'y':
+            sys.exit()
+    if os.path.exists(os.path.join(conf.log_path, conf.exp_name)):
+        shutil.rmtree(os.path.join(conf.log_path, conf.exp_name))
+    if os.path.exists(os.path.join(conf.model_path, conf.exp_name)):
+        shutil.rmtree(os.path.join(conf.model_path, conf.exp_name))
+
+    # create directories for this run
+    os.makedirs(os.path.join(conf.model_path, conf.exp_name))
+    os.makedirs(os.path.join(conf.log_path, conf.exp_name))
 
     # flog
-    flog = open(os.path.join(conf.model_path, conf.name, 'train.log'), 'w')
+    flog = open(os.path.join(conf.log_path, conf.exp_name, 'train.log'), 'w')
+    
+    # set training device
+    device = torch.device(conf.device)
+    print(f'Using device: {conf.device}')
     flog.write(f'Using device: {conf.device}\n')
 
     # control randomness
@@ -49,80 +56,48 @@ def train_vae(conf):
     random.seed(conf.seed)
     np.random.seed(conf.seed)
     torch.manual_seed(conf.seed)
-    if conf.deterministic and 'cuda' in conf.device:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
     # create models
-    encoder = models.RecursiveEncoder(conf, variational=True, discriminator=False, probabilistic=not conf.non_variational, child_encoder_type=conf.child_encoder_type)
-    decoder = models.RecursiveDecoder(conf, child_decoder_type=conf.child_decoder_type)
+    encoder = models.RecursiveEncoder(conf, variational=True, probabilistic=not conf.non_variational)
+    decoder = models.RecursiveDecoder(conf)
 
     models = [encoder, decoder]
     model_names = ['vae_encoder', 'vae_decoder']
 
-    if conf.resume_from_another_exp:
-        print(f'Loading ckpt from {conf.resume_ckpt_dir} epoch {conf.resume_model_epoch}')
-        flog.write(f'Loading ckpt from {conf.resume_ckpt_dir} epoch {conf.resume_model_epoch}\n')
-        __ = utils.load_checkpoint(
-            models=models, model_names=model_names, dirname=conf.resume_ckpt_dir,
-            epoch=conf.resume_model_epoch, strict=True)
-
     # create optimizers
-    if conf.optimizer == 'adam':
-        encoder_opt = torch.optim.Adam(encoder.parameters(), lr=conf.lr)
-        decoder_opt = torch.optim.Adam(decoder.parameters(), lr=conf.lr)
-    elif conf.optimizer == 'sgd':
-        encoder_opt = torch.optim.SGD(encoder.parameters(), lr=conf.lr)
-        decoder_opt = torch.optim.SGD(decoder.parameters(), lr=conf.lr)
-    else:
-        raise ValueError(f'Unknown optimizer: {conf.optimizer}')
-
+    encoder_opt = torch.optim.Adam(encoder.parameters(), lr=conf.lr)
+    decoder_opt = torch.optim.Adam(decoder.parameters(), lr=conf.lr)
     optimizers = [encoder_opt, decoder_opt]
     optimizer_names = ['vae_encoder', 'vae_decoder']
 
-    encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_opt, step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
-    decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_opt, step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
+    # learning rate schedular
+    encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_opt, \
+            step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
+    decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_opt, \
+            step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
 
-    # optional: resume from checkpoint
-    if conf.resume:
-        start_epoch = utils.load_checkpoint(
-            models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.name),
-            epoch=None, optimizers=optimizers, optimizer_names=optimizer_names)
-    else:
-        start_epoch = 0
-
-    # create training and validation datasets
-    if conf.data_type == 'grass':
-        data_features = ['object']
-        train_dataset = GRASSDataset(root=conf.data_path, object_list=conf.dataset, data_features=data_features)
-        valdt_dataset = GRASSDataset(root=conf.data_path, object_list=conf.val_dataset, data_features=data_features)
-    elif conf.data_type == 'partnet':
-        data_features = ['object']
-        train_dataset = PartNetDataset(root=conf.data_path, object_list=conf.dataset, data_features=data_features)
-        valdt_dataset = PartNetDataset(root=conf.data_path, object_list=conf.val_dataset, data_features=data_features)
-    elif conf.data_type == 'sgen':
-        data_features = ['object']
-        train_dataset = SGenDataset(root=conf.data_path, object_list=conf.dataset, data_features=data_features)
-        valdt_dataset = SGenDataset(root=conf.data_path, object_list=conf.val_dataset, data_features=data_features)
-    elif conf.data_type == 'partnetobb':
-        data_features = ['object']
-        train_dataset = PartNetObbDataset(root=conf.data_path, object_list=conf.dataset, data_features=data_features, load_geo=conf.load_geo, load_geo_feat=conf.load_geo_feat)
-        valdt_dataset = PartNetObbDataset(root=conf.data_path, object_list=conf.val_dataset, data_features=data_features, load_geo=conf.load_geo,  load_geo_feat=conf.load_geo_feat)
-    else:
-        raise ValueError(f'Unknown data type: {conf.data_type}')
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=conf.batch_size, shuffle=True, collate_fn=collate_feats)
-    valdt_dataloader = torch.utils.data.DataLoader(valdt_dataset, batch_size=conf.batch_size, shuffle=True, collate_fn=collate_feats)
+    # create training and validation datasets and data loaders
+    data_features = ['object']
+    train_dataset = PartNetDataset(conf.data_path, conf.train_dataset, data_features, \
+            load_geo=conf.load_geo)
+    valdt_dataset = PartNetDataset(conf.data_path, conf.val_dataset, data_features, \
+            load_geo=conf.load_geo)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=conf.batch_size, \
+            shuffle=True, collate_fn=utils.collate_feats)
+    valdt_dataloader = torch.utils.data.DataLoader(valdt_dataset, batch_size=conf.batch_size, \
+            shuffle=True, collate_fn=utils.collate_feats)
 
     # create logs
     if not conf.no_console_log:
-        header = '     Time    Epoch     Dataset    Iteration    Progress(%)             LR             BoxLoss   StructLoss    EdgeExists  EdgeFeats  KLDivLoss    SymLoss     AdjLoss      AnchorLoss    TotalLoss'
+        header = '     Time    Epoch     Dataset    Iteration    Progress(%)             LR             BoxLoss   StructLoss    EdgeExists   KLDivLoss    SymLoss     AdjLoss      AnchorLoss    TotalLoss'
     if not conf.no_tb_log:
-        from tensorboardX import SummaryWriter # https://github.com/lanpa/tensorboard-pytorch
-        train_writer = SummaryWriter(os.path.join(conf.log_path, conf.name))
-        valdt_writer = SummaryWriter(os.path.join(conf.log_path, conf.name, 'val'))
+        # https://github.com/lanpa/tensorboard-pytorch
+        from tensorboardX import SummaryWriter
+        train_writer = SummaryWriter(os.path.join(conf.log_path, conf.exp_name, 'train'))
+        valdt_writer = SummaryWriter(os.path.join(conf.log_path, conf.exp_name, 'val'))
 
     # save config
-    torch.save(conf, os.path.join(conf.model_path, conf.name, 'conf.pth'))
+    torch.save(conf, os.path.join(conf.model_path, conf.exp_name, 'conf.pth'))
 
     for m in models:
         m.to(device)
@@ -137,11 +112,11 @@ def train_vae(conf):
     last_checkpoint_step = None
     last_train_console_log_step, last_valdt_console_log_step = None, None
     train_num_batch, valdt_num_batch = len(train_dataloader), len(valdt_dataloader)
-    for epoch in range(start_epoch, conf.epochs):
+    for epoch in range(conf.epochs):
 
         if not conf.no_console_log:
-            print(f'training run {conf.name}')
-            flog.write(f'training run {conf.name}\n')
+            print(f'training run {conf.exp_name}')
+            flog.write(f'training run {conf.exp_name}\n')
             print(header)
             flog.write(header+'\n')
 
@@ -185,7 +160,7 @@ def train_vae(conf):
                 if last_checkpoint_step is None or train_step - last_checkpoint_step >= conf.checkpoint_interval or round(train_step) == conf.epochs * train_num_batch:
                     print("Saving checkpoint ...... ", end='', flush=True)
                     utils.save_checkpoint(
-                        models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.name),
+                        models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.exp_name),
                         epoch=epoch, prepend_epoch=True, optimizers=optimizers, optimizer_names=model_names)
                     print("DONE")
                     last_checkpoint_step = train_step
@@ -218,7 +193,7 @@ def train_vae(conf):
     # save the final models
     print("Saving final models ...... ", end='', flush=True)
     utils.save_checkpoint(
-        models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.name),
+        models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.exp_name),
         epoch=epoch, prepend_epoch=False, optimizers=optimizers, optimizer_names=optimizer_names)
     print("DONE")
 

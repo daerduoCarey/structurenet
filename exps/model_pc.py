@@ -857,7 +857,7 @@ class RecursiveDecoder(nn.Module):
             # train semantic labels
             child_sem_pred_logits = torch.cat(child_sem_pred_logits, dim=0)
             child_sem_gt_labels = torch.tensor(child_sem_gt_labels, dtype=torch.int64, device=child_sem_pred_logits.device)
-            semantic_loss = self.semCELoss(child_sem_pred_logits, child_sem_gt_labels) * 0.1
+            semantic_loss = self.semCELoss(child_sem_pred_logits, child_sem_gt_labels)
             semantic_loss = semantic_loss.sum()
 
             # train exist scores

@@ -4,9 +4,9 @@
 
 def add_base_args(parser):
     parser.add_argument('--exp_name', type=str, default='no_name', help='name of the training run')
+    parser.add_argument('--category', type=str, default='Chair', help='object category')
     parser.add_argument('--device', type=str, default='cuda:0', help='cpu or cuda:x for using cuda on GPU number x')
     parser.add_argument('--seed', type=int, default=3124256514, help='random seed (for reproducibility)')
-    parser.add_argument('--deterministic', action='store_true', default=False, help='set pytorch and cudnn to deterministic mode (slower but should be fully deterministic)')
 
     return parser
 
@@ -36,14 +36,12 @@ def add_train_vae_args(parser):
     parser.add_argument('--geo_feat_size', type=int, default=100)
     parser.add_argument('--feature_size', type=int, default=256)
     parser.add_argument('--hidden_size', type=int, default=256)
-    parser.add_argument('--edge_dec_hidden_size', type=int, default=256, help='In the decoder, edge features are decoded from pairs of node features. This is the dimension of these node features.')
     parser.add_argument('--num_point', type=int, default=1000)
     parser.add_argument('--load_geo', action='store_true', default=False)
     parser.add_argument('--max_tree_depth', type=int, default=100, help='maximum depth of generated object trees')
     parser.add_argument('--max_child_num', type=int, default=10, help='maximum number of children per parent')
-    parser.add_argument('--symmetric_type', type=str, default='max', help='node pooling type')
+    parser.add_argument('--node_symmetric_type', type=str, default='max', help='node pooling type')
     parser.add_argument('--edge_symmetric_type', type=str, default='avg', help='edge pooling type')
-    parser.add_argument('--dec_edge_symmetric_type', type=str, default='avg', help='edge pooling type')
     parser.add_argument('--num_gnn_iterations', type=int, default=2, help='number of message passing iterations for the GNN')
     parser.add_argument('--num_dec_gnn_iterations', type=int, default=2, help='number of message passing iterations for the GNN')
     parser.add_argument('--model_version', type=str, default='model', help='model file name')
@@ -55,8 +53,6 @@ def add_train_vae_args(parser):
     parser.add_argument('--weight_decay', type=float, default=1e-5)
     parser.add_argument('--lr_decay_by', type=float, default=0.9)
     parser.add_argument('--lr_decay_every', type=float, default=500)
-    parser.add_argument('--optimizer', type=str, default='adam', help='which optimizer')
-    parser.add_argument('--resume', action='store_true', default=False, help='resume training run')
     parser.add_argument('--non_variational', action='store_true', default=False, help='make the variational autoencoder non-variational')
 
     # loss weights
@@ -71,7 +67,7 @@ def add_train_vae_args(parser):
     parser.add_argument('--loss_weight_anchor', type=float, default=10.0, help='weight for the anchor reconstruction loss')
     parser.add_argument('--loss_weight_leaf', type=float, default=1.0, help='weight for the "node is leaf" reconstruction loss')
     parser.add_argument('--loss_weight_exists', type=float, default=1.0, help='weight for the "node exists" reconstruction loss')
-    parser.add_argument('--loss_weight_semantic', type=float, default=1.0, help='weight for the semantic reconstruction loss')
+    parser.add_argument('--loss_weight_semantic', type=float, default=0.1, help='weight for the semantic reconstruction loss')
     parser.add_argument('--loss_weight_edge_exists', type=float, default=1.0, help='weight for the "edge exists" loss')
     parser.add_argument('--loss_weight_edge_feats', type=float, default=1.0, help='weight for the edge feature loss')
 
