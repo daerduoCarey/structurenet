@@ -12,7 +12,7 @@ import torch_scatter
 import compute_sym
 from chamfer_distance import ChamferDistance
 from data import Tree
-from utils import linear_assignment, load_pts, export_pts, export_ply_with_label, transform_pc_batch, get_surface_reweighting_batch
+from utils import linear_assignment, load_pts, transform_pc_batch, get_surface_reweighting_batch
 
 
 class Sampler(nn.Module):
@@ -190,7 +190,8 @@ class RecursiveEncoder(nn.Module):
 
             # pad with zeros
             if child_feats.shape[1] < self.conf.max_child_num:
-                padding = child_feats.new_zeros(child_feats.shape[0], self.conf.max_child_num-child_feats.shape[1], child_feats.shape[2])
+                padding = child_feats.new_zeros(child_feats.shape[0], \
+                        self.conf.max_child_num-child_feats.shape[1], child_feats.shape[2])
                 child_feats = torch.cat([child_feats, padding], dim=1)
 
             # 1 if the child exists, 0 if it is padded
@@ -201,8 +202,7 @@ class RecursiveEncoder(nn.Module):
             edge_type_onehot, edge_indices = node.edge_tensors(
                 edge_types=self.conf.edge_types, device=child_feats.device, type_onehot=True)
 
-            return self.child_encoder(child_feats=child_feats, child_exists=child_exists, \
-                edge_type_onehot=edge_type_onehot, edge_indices=edge_indices)
+            return self.child_encoder(child_feats, child_exists, edge_type_onehot, edge_indices)
 
     def encode_structure(self, obj):
         root_latent = self.encode_node(obj.root)
@@ -306,10 +306,11 @@ class GNNChildDecoder(nn.Module):
             ], dim=3)
         edge_latents = torch.relu(self.mlp_edge_latent(edge_latents))
 
-        # dense edge graph existence prediction
+        # edge existence prediction
         edge_exists_logits_per_type = []
         for i in range(self.edge_type_num):
-            edge_exists_logits_cur_type = self.mlp_edge_exists[i](edge_latents).view(batch_size, self.max_child_num, self.max_child_num, 1)
+            edge_exists_logits_cur_type = self.mlp_edge_exists[i](edge_latents).view(\
+                    batch_size, self.max_child_num, self.max_child_num, 1)
             edge_exists_logits_per_type.append(edge_exists_logits_cur_type)
         edge_exists_logits = torch.cat(edge_exists_logits_per_type, dim=3)
 
@@ -325,7 +326,8 @@ class GNNChildDecoder(nn.Module):
         edge_indices = torch.nonzero(edge_exists_logits > 0)
         edge_types = edge_indices[:, 3]
         edge_indices = edge_indices[:, 1:3]
-        nodes_exist_mask = (child_exists_logits[0, edge_indices[:, 0], 0] > 0) & (child_exists_logits[0, edge_indices[:, 1], 0] > 0)
+        nodes_exist_mask = (child_exists_logits[0, edge_indices[:, 0], 0] > 0) \
+                & (child_exists_logits[0, edge_indices[:, 1], 0] > 0)
         edge_indices = edge_indices[nodes_exist_mask, :]
         edge_types = edge_types[nodes_exist_mask]
 
@@ -336,7 +338,8 @@ class GNNChildDecoder(nn.Module):
         # of the possibly multiple edges between two nodes it is working with
         edge_type_logit = edge_exists_logits[0:1, edge_indices[:, 0], edge_indices[:, 1], :]
         edge_type_logit = edge_feats_mp.new_zeros(edge_feats_mp.shape[:2]+(self.edge_type_num,))
-        edge_type_logit[0:1, range(edge_type_logit.shape[1]), edge_types] = edge_exists_logits[0:1, edge_indices[:, 0], edge_indices[:, 1], edge_types]
+        edge_type_logit[0:1, range(edge_type_logit.shape[1]), edge_types] = \
+                edge_exists_logits[0:1, edge_indices[:, 0], edge_indices[:, 1], edge_types]
         edge_feats_mp = torch.cat([edge_feats_mp, edge_type_logit], dim=2)
 
         num_edges = edge_indices.shape[0]
@@ -447,14 +450,14 @@ class RecursiveDecoder(nn.Module):
     # decode a root code into a tree structure
     def decode_structure(self, z, max_depth):
         root_latent = self.sample_decoder(z)
-        root = self.decode_node(root_latent, max_depth, full_label=Tree.obj_cat)
+        root = self.decode_node(root_latent, max_depth, Tree.obj_cat)
         obj = Tree(root=root)
         return obj
 
     # decode a part node
     def decode_node(self, node_latent, max_depth, full_label, is_leaf=False):
         if node_latent.shape[0] != 1:
-            raise ValueError('Node decoding can does not support batch_size > 1.')
+            raise ValueError('Node decoding does not support batch_size > 1.')
 
         is_leaf_logit = self.leaf_classifier(node_latent)
         node_is_leaf = is_leaf_logit.item() > 0
@@ -463,7 +466,7 @@ class RecursiveDecoder(nn.Module):
         if max_depth < 1:
             is_leaf = True
 
-        # decode box
+        # decode the current part box
         box = self.box_decoder(node_latent)
 
         if node_is_leaf or is_leaf:
@@ -579,8 +582,7 @@ class RecursiveDecoder(nn.Module):
                     if edge_type_list_gt[0, i].item() == 0: # ADJ
                         adj_from.append(edge_from_idx)
                         adj_to.append(edge_to_idx)
-                    else:   # REF/TRANS SYM
-                        # compute sym-params for the two box preds
+                    else:   # SYM
                         if edge_type_list_gt[0, i].item() == 1: # ROT_SYM
                             mat1to2, mat2to1 = compute_sym.compute_rot_sym(child_pred_boxes[edge_from_idx].cpu().detach().numpy(), child_pred_boxes[edge_to_idx].cpu().detach().numpy())
                         elif edge_type_list_gt[0, i].item() == 2: # TRANS_SYM
@@ -635,13 +637,13 @@ class RecursiveDecoder(nn.Module):
                 unused_box_loss = 0.0
 
             # train exist scores
-            child_exists_loss = F.binary_cross_entropy_with_logits(
+            child_exists_loss = F.binary_cross_entropy_with_logits(\
                 input=child_exists_logits, target=child_exists_gt, reduction='none')
             child_exists_loss = child_exists_loss.sum()
 
             # train edge exists scores
-            edge_exists_loss = F.binary_cross_entropy_with_logits(input=edge_exists_logits, \
-                    target=edge_exists_gt, reduction='none')
+            edge_exists_loss = F.binary_cross_entropy_with_logits(\
+                    input=edge_exists_logits, target=edge_exists_gt, reduction='none')
             edge_exists_loss = edge_exists_loss.sum()
             # rescale to make it comparable to other losses, 
             # which are in the order of the number of child nodes
@@ -661,7 +663,8 @@ class RecursiveDecoder(nn.Module):
                     reweight_to = get_surface_reweighting_batch(obb_to[:, 3:6], self.unit_cube.size(0))
                 pc_to = transform_pc_batch(self.unit_cube, obb_to)
                 sym_mat_th = torch.cat(sym_mat, dim=0)
-                transformed_pc_from = pc_from.matmul(torch.transpose(sym_mat_th[:, :, :3], 1, 2)) + sym_mat_th[:, :, 3].unsqueeze(dim=1).repeat(1, pc_from.size(1), 1)
+                transformed_pc_from = pc_from.matmul(torch.transpose(sym_mat_th[:, :, :3], 1, 2)) + \
+                        sym_mat_th[:, :, 3].unsqueeze(dim=1).repeat(1, pc_from.size(1), 1)
                 dist1, dist2 = self.chamferLoss(transformed_pc_from, pc_to)
                 loss1 = (dist1 * reweight_from).sum(dim=1) / (reweight_from.sum(dim=1) + 1e-12)
                 loss2 = (dist2 * reweight_to).sum(dim=1) / (reweight_to.sum(dim=1) + 1e-12)
@@ -707,7 +710,8 @@ class RecursiveDecoder(nn.Module):
                     obbs_to = pred2allboxes[sym_to[i]][1:, :]
                     pc_from = transform_pc_batch(self.unit_cube, obbs_from).view(-1, 3)
                     pc_to = transform_pc_batch(self.unit_cube, obbs_to).view(-1, 3)
-                    transformed_pc_from = pc_from.matmul(torch.transpose(sym_mat[i][0, :, :3], 0, 1)) + sym_mat[i][0, :, 3].unsqueeze(dim=0).repeat(pc_from.size(0), 1)
+                    transformed_pc_from = pc_from.matmul(torch.transpose(sym_mat[i][0, :, :3], 0, 1)) + \
+                            sym_mat[i][0, :, 3].unsqueeze(dim=0).repeat(pc_from.size(0), 1)
                     dist1, dist2 = self.chamferLoss(transformed_pc_from.view(1, -1, 3), pc_to.view(1, -1, 3))
                     sym_loss += (dist1.mean() + dist2.mean()) * (s1 + s2) / 2
 

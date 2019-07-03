@@ -48,6 +48,7 @@ class Tree(object):
             self.part_id = part_id          # part_id in result_after_merging.json of PartNet
             self.box = box                  # box parameter for all nodes
             self.geo = geo                  # 1 x 1000 x 3 point cloud
+            self.geo_feat = geo_feat        # 1 x 100 geometry feature
             self.label = label              # node semantic label at the current level
             self.full_label = full_label    # node semantic label from root (separated by slash)
             self.children = [] if children is None else children
@@ -299,6 +300,7 @@ class Tree(object):
     def free(self):
         for node in self.depth_first_traversal():
             del node.geo
+            del node.geo_feat
             del node.box
             del node
 

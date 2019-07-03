@@ -40,8 +40,8 @@ def add_train_vae_args(parser):
     parser.add_argument('--max_child_num', type=int, default=10, help='maximum number of children per parent')
     parser.add_argument('--node_symmetric_type', type=str, default='max', help='node pooling type')
     parser.add_argument('--edge_symmetric_type', type=str, default='avg', help='edge pooling type')
-    parser.add_argument('--num_gnn_iterations', type=int, default=2, help='number of message passing iterations for the GNN')
-    parser.add_argument('--num_dec_gnn_iterations', type=int, default=2, help='number of message passing iterations for the GNN')
+    parser.add_argument('--num_gnn_iterations', type=int, default=2, help='number of message passing iterations for the GNN encoding')
+    parser.add_argument('--num_dec_gnn_iterations', type=int, default=2, help='number of message passing iterations for the GNN decoding')
     parser.add_argument('--model_version', type=str, default='model', help='model file name')
 
     # training parameters
@@ -54,10 +54,10 @@ def add_train_vae_args(parser):
     parser.add_argument('--non_variational', action='store_true', default=False, help='make the variational autoencoder non-variational')
 
     # loss weights
-    parser.add_argument('--loss_weight_geo', type=float, default=1.0, help='weight for the geo recon loss')
-    parser.add_argument('--loss_weight_latent', type=float, default=1.0, help='weight for the latent recon loss')
-    parser.add_argument('--loss_weight_center', type=float, default=1.0, help='weight for the center recon loss')
-    parser.add_argument('--loss_weight_scale', type=float, default=1.0, help='weight for the scale recon loss')
+    parser.add_argument('--loss_weight_geo', type=float, default=2.0, help='weight for the geo recon loss')
+    parser.add_argument('--loss_weight_latent', type=float, default=20.0, help='weight for the latent recon loss')
+    parser.add_argument('--loss_weight_center', type=float, default=20.0, help='weight for the center recon loss')
+    parser.add_argument('--loss_weight_scale', type=float, default=20.0, help='weight for the scale recon loss')
     parser.add_argument('--loss_weight_sym', type=float, default=1.0, help='weight for the sym loss')
     parser.add_argument('--loss_weight_adj', type=float, default=1.0, help='weight for the adj loss')
     parser.add_argument('--loss_weight_kldiv', type=float, default=0.05, help='weight for the kl divergence loss')
@@ -74,6 +74,10 @@ def add_train_vae_args(parser):
     parser.add_argument('--no_console_log', action='store_true', default=False)
     parser.add_argument('--console_log_interval', type=int, default=3, help='number of optimization steps beween console log prints')
     parser.add_argument('--checkpoint_interval', type=int, default=500, help='number of optimization steps beween checkpoints')
+
+    # load pretrained model (for pc exps)
+    parser.add_argument('--part_pc_exp_name', type=str, help='resume model exp name')
+    parser.add_argument('--part_pc_model_epoch', type=int, help='resume model epoch')
 
     return parser
 
