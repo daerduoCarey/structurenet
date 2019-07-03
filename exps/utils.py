@@ -76,13 +76,9 @@ def vrrotvec2mat(rotvector):
     m = rotvector.new_tensor([[t*x*x+c, t*x*y-s*z, t*x*z+s*y], [t*x*y+s*z, t*y*y+c, t*y*z-s*x], [t*x*z-s*y, t*y*z+s*x, t*z*z+c]])
     return m
 
-def get_model_module(version=''):
-    if version == '':
-        module_name = 'models'
-    else:
-        module_name = f'models_{version}'
+def get_model_module(model_version):
     importlib.invalidate_caches()
-    return importlib.import_module(module_name)
+    return importlib.import_module(model_version)
 
 # row_counts, col_counts: row and column counts of each distance matrix (assumed to be full if given)
 def linear_assignment(distance_mat, row_counts=None, col_counts=None):

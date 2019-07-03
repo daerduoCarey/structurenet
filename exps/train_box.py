@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.utils.data
 from config import add_train_vae_args
-from data import PartNetDataset
+from data import PartNetDataset, Tree
 import utils
 
 # Use 1-4 CPU threads to train.
@@ -23,7 +23,7 @@ torch.set_num_threads(2)
 
 def train_vae(conf):
     # load network model
-    models = utils.get_model_module(version=conf.model_version)
+    models = utils.get_model_module(conf.model_version)
 
     # check if training run already exists. If so, detect them.
     if os.path.exists(os.path.join(conf.log_path, conf.exp_name)) or \
@@ -99,11 +99,13 @@ def train_vae(conf):
     # save config
     torch.save(conf, os.path.join(conf.model_path, conf.exp_name, 'conf.pth'))
 
+    # send parameters to device
     for m in models:
         m.to(device)
     for o in optimizers:
         utils.optimizer_to_device(o, device)
 
+    # start training
     print("Starting training ...... ")
     flog.write('Starting training ......\n')
 
@@ -112,8 +114,9 @@ def train_vae(conf):
     last_checkpoint_step = None
     last_train_console_log_step, last_valdt_console_log_step = None, None
     train_num_batch, valdt_num_batch = len(train_dataloader), len(valdt_dataloader)
-    for epoch in range(conf.epochs):
 
+    # train for every epoch
+    for epoch in range(conf.epochs):
         if not conf.no_console_log:
             print(f'training run {conf.exp_name}')
             flog.write(f'training run {conf.exp_name}\n')
@@ -126,12 +129,13 @@ def train_vae(conf):
         train_fraction_done, valdt_fraction_done = 0.0, 0.0
         valdt_batch_ind = -1
 
+        # train for every batch
         for train_batch_ind, batch in train_batches:
-
             train_fraction_done = (train_batch_ind+1) / train_num_batch
             train_step = epoch * train_num_batch + train_batch_ind
 
-            log_console = not conf.no_console_log and (last_train_console_log_step is None or train_step - last_train_console_log_step >= conf.console_log_interval)
+            log_console = not conf.no_console_log and (last_train_console_log_step is None \
+                    or train_step - last_train_console_log_step >= conf.console_log_interval)
             if log_console:
                 last_train_console_log_step = train_step
 
@@ -146,7 +150,7 @@ def train_vae(conf):
                 log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=train_writer, 
                 encoder_lr=encoder_opt.param_groups[0]['lr'], decoder_lr=decoder_opt.param_groups[0]['lr'], flog=flog)
 
-            # Do parameter optimization
+            # optimize one step
             encoder_scheduler.step()
             decoder_scheduler.step()
             encoder_opt.zero_grad()
@@ -157,7 +161,8 @@ def train_vae(conf):
 
             # save checkpoint
             with torch.no_grad():
-                if last_checkpoint_step is None or train_step - last_checkpoint_step >= conf.checkpoint_interval or round(train_step) == conf.epochs * train_num_batch:
+                if last_checkpoint_step is None \
+                        or train_step - last_checkpoint_step >= conf.checkpoint_interval:
                     print("Saving checkpoint ...... ", end='', flush=True)
                     utils.save_checkpoint(
                         models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.exp_name),
@@ -165,15 +170,15 @@ def train_vae(conf):
                     print("DONE")
                     last_checkpoint_step = train_step
 
-            # validation
+            # validate one batch
             while valdt_fraction_done <= train_fraction_done and valdt_batch_ind+1 < valdt_num_batch:
-
                 valdt_batch_ind, batch = next(valdt_batches)
 
                 valdt_fraction_done = (valdt_batch_ind+1) / valdt_num_batch
                 valdt_step = (epoch + valdt_fraction_done) * train_num_batch - 1
 
-                log_console = not conf.no_console_log and (last_valdt_console_log_step is None or valdt_step - last_valdt_console_log_step >= conf.console_log_interval)
+                log_console = not conf.no_console_log and (last_valdt_console_log_step is None \
+                        or valdt_step - last_valdt_console_log_step >= conf.console_log_interval)
                 if log_console:
                     last_valdt_console_log_step = valdt_step
 
@@ -182,7 +187,6 @@ def train_vae(conf):
                     m.eval()
 
                 with torch.no_grad():
-
                     # forward pass (including logging)
                     __ = forward(
                         batch=batch, data_features=data_features, encoder=encoder, decoder=decoder, device=device, conf=conf,
@@ -202,7 +206,6 @@ def train_vae(conf):
 def forward(batch, data_features, encoder, decoder, device, conf,
             is_valdt=False, step=None, epoch=None, batch_ind=0, num_batch=1, start_time=0,
             log_console=False, log_tb=False, tb_writer=None, encoder_lr=None, decoder_lr=None, flog=None):
-
     objects = batch[data_features.index('object')]
     
     losses = {
@@ -212,33 +215,30 @@ def forward(batch, data_features, encoder, decoder, device, conf,
         'exists': torch.zeros(1, device=device),
         'semantic': torch.zeros(1, device=device),
         'edge_exists': torch.zeros(1, device=device),
-        'edge_feats': torch.zeros(1, device=device),
         'kldiv': torch.zeros(1, device=device),
         'sym': torch.zeros(1, device=device),
         'adj': torch.zeros(1, device=device)}
- 
-    if not conf.no_fold:
-        raise ValueError('Folds are currently not supported.')
-    else:
-        for obj in objects:
-            obj.to(device)
+    
+    # process every data in the batch individually
+    for obj in objects:
+        obj.to(device)
 
-            # encode object to get root code
-            root_code = encoder.encode_structure(obj=obj)
+        # encode object to get root code
+        root_code = encoder.encode_structure(obj=obj)
 
-            # get kldiv loss
-            if not conf.non_variational:
-                root_code, obj_kldiv_loss = torch.chunk(root_code, 2, 1)
-                obj_kldiv_loss = -obj_kldiv_loss.sum() # negative kldiv, sum over feature dimensions
-                losses['kldiv'] = losses['kldiv'] + obj_kldiv_loss
+        # get kldiv loss
+        if not conf.non_variational:
+            root_code, obj_kldiv_loss = torch.chunk(root_code, 2, 1)
+            obj_kldiv_loss = -obj_kldiv_loss.sum() # negative kldiv, sum over feature dimensions
+            losses['kldiv'] = losses['kldiv'] + obj_kldiv_loss
 
-            # decode root code to get reconstruction loss
-            obj_losses = decoder.structure_recon_loss(z=root_code, gt_tree=obj)
-            for loss_name, loss in obj_losses.items():
-                losses[loss_name] = losses[loss_name] + loss
+        # decode root code to get reconstruction loss
+        obj_losses = decoder.structure_recon_loss(z=root_code, gt_tree=obj)
+        for loss_name, loss in obj_losses.items():
+            losses[loss_name] = losses[loss_name] + loss
 
-        for loss_name in losses.keys():
-            losses[loss_name] = losses[loss_name] / len(objects)
+    for loss_name in losses.keys():
+        losses[loss_name] = losses[loss_name] / len(objects)
 
     losses['box'] *= conf.loss_weight_box
     losses['anchor'] *= conf.loss_weight_anchor
@@ -246,7 +246,6 @@ def forward(batch, data_features, encoder, decoder, device, conf,
     losses['exists'] *= conf.loss_weight_exists
     losses['semantic'] *= conf.loss_weight_semantic
     losses['edge_exists'] *= conf.loss_weight_edge_exists
-    losses['edge_feats'] *= conf.loss_weight_edge_feats
     losses['kldiv'] *= conf.loss_weight_kldiv
     losses['sym'] *= conf.loss_weight_sym
     losses['adj'] *= conf.loss_weight_adj
@@ -256,7 +255,6 @@ def forward(batch, data_features, encoder, decoder, device, conf,
         total_loss += loss
 
     with torch.no_grad():
-
         # log to console
         if log_console:
             print(
@@ -269,7 +267,6 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{losses['box'].item():>11.2f} '''
                 f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
                 f'''{losses['edge_exists'].item():>11.2f} '''
-                f'''{losses['edge_feats'].item():>11.2f} '''
                 f'''{losses['kldiv'].item():>10.2f} '''
                 f'''{losses['sym'].item():>10.2f} '''
                 f'''{losses['adj'].item():>10.2f} '''
@@ -285,7 +282,6 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{losses['box'].item():>11.2f} '''
                 f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
                 f'''{losses['edge_exists'].item():>11.2f} '''
-                f'''{losses['edge_feats'].item():>11.2f} '''
                 f'''{losses['kldiv'].item():>10.2f} '''
                 f'''{losses['sym'].item():>10.2f} '''
                 f'''{losses['adj'].item():>10.2f} '''
@@ -302,7 +298,6 @@ def forward(batch, data_features, encoder, decoder, device, conf,
             tb_writer.add_scalar('exists_loss', losses['exists'].item(), step)
             tb_writer.add_scalar('semantic_loss', losses['semantic'].item(), step)
             tb_writer.add_scalar('edge_exists_loss', losses['edge_exists'].item(), step)
-            tb_writer.add_scalar('edge_feats_loss', losses['edge_feats'].item(), step)
             tb_writer.add_scalar('kldiv_loss', losses['kldiv'].item(), step)
             tb_writer.add_scalar('sym_loss', losses['sym'].item(), step)
             tb_writer.add_scalar('adj_loss', losses['adj'].item(), step)
@@ -316,4 +311,6 @@ if __name__ == '__main__':
     parser = add_train_vae_args(parser)
     config = parser.parse_args()
 
-    train_vae(conf=config)
+    Tree.load_category_info(config.category)
+    train_vae(config)
+

@@ -11,7 +11,7 @@ from torch import nn
 import torch_scatter
 import compute_sym
 from chamfer_distance import ChamferDistance
-from data import Tree, part_name2cids, part_id2name, num_sem, part_non_leaf_sem_names, obj_cat
+from data import Tree
 from utils import linear_assignment, load_pts, export_pts, export_ply_with_label, transform_pc_batch, get_surface_reweighting_batch
 
 
@@ -63,7 +63,7 @@ class GNNChildEncoder(nn.Module):
         self.num_iterations = num_iterations
         self.edge_type_num = edge_type_num
 
-        self.child_op = nn.Linear(node_feat_size + num_sem, hidden_size)
+        self.child_op = nn.Linear(node_feat_size + Tree.num_sem, hidden_size)
         self.node_edge_op = torch.nn.ModuleList()
         for i in range(self.num_iterations):
             self.node_edge_op.append(nn.Linear(hidden_size*2+edge_type_num, hidden_size))
@@ -269,7 +269,7 @@ class GNNChildDecoder(nn.Module):
 
         self.mlp_parent = nn.Linear(node_feat_size, hidden_size*max_child_num)
         self.mlp_exists = nn.Linear(hidden_size, 1)
-        self.mlp_sem = nn.Linear(hidden_size, num_sem)
+        self.mlp_sem = nn.Linear(hidden_size, Tree.num_sem)
         self.mlp_child = nn.Linear(hidden_size, node_feat_size)
         self.mlp_edge_latent = nn.Linear(hidden_size*2, hidden_size)
 
@@ -282,7 +282,7 @@ class GNNChildDecoder(nn.Module):
             self.node_edge_op.append(nn.Linear(hidden_size*3+edge_type_num, hidden_size))
 
         self.mlp_child = nn.Linear(hidden_size*(self.num_iterations+1), hidden_size)
-        self.mlp_sem = nn.Linear(hidden_size, num_sem)
+        self.mlp_sem = nn.Linear(hidden_size, Tree.num_sem)
         self.mlp_child2 = nn.Linear(hidden_size, node_feat_size)
 
     def forward(self, parent_feature):
@@ -383,7 +383,7 @@ class GNNChildDecoder(nn.Module):
 
         # node semantics
         child_sem_logits = self.mlp_sem(child_feats.view(-1, self.hidden_size))
-        child_sem_logits = child_sem_logits.view(batch_size, self.max_child_num, num_sem)
+        child_sem_logits = child_sem_logits.view(batch_size, self.max_child_num, Tree.num_sem)
 
         # node features
         child_feats = self.mlp_child2(child_feats.view(-1, self.hidden_size))
@@ -447,7 +447,7 @@ class RecursiveDecoder(nn.Module):
     # decode a root code into a tree structure
     def decode_structure(self, z, max_depth):
         root_latent = self.sample_decoder(z)
-        root = self.decode_node(root_latent, max_depth, full_label=obj_cat)
+        root = self.decode_node(root_latent, max_depth, full_label=Tree.obj_cat)
         obj = Tree(root=root)
         return obj
 
@@ -481,12 +481,12 @@ class RecursiveDecoder(nn.Module):
             child_idx = {}
             for ci in range(child_feats.shape[1]):
                 if torch.sigmoid(child_exists_logit[:, ci, :]).item() > 0.5:
-                    idx = np.argmax(child_sem_logits[ci, part_name2cids[full_label]])
-                    idx = part_name2cids[full_label][idx]
-                    child_full_label = part_id2name[idx]
+                    idx = np.argmax(child_sem_logits[ci, Tree.part_name2cids[full_label]])
+                    idx = Tree.part_name2cids[full_label][idx]
+                    child_full_label = Tree.part_id2name[idx]
                     child_nodes.append(self.decode_node(\
                             child_feats[:, ci, :], max_depth-1, child_full_label, \
-                            is_leaf=(child_full_label not in part_non_leaf_sem_names)))
+                            is_leaf=(child_full_label not in Tree.part_non_leaf_sem_names)))
                     child_idx[ci] = len(child_nodes) - 1
 
             # edges
@@ -530,7 +530,7 @@ class RecursiveDecoder(nn.Module):
             is_leaf_loss = self.isLeafLossEstimator(is_leaf_logit, is_leaf_logit.new_tensor(gt_node.is_leaf).view(1, -1))
             return {'box': box_loss, 'leaf': is_leaf_loss, 'anchor': anchor_loss, 
                     'exists': torch.zeros_like(box_loss), 'semantic': torch.zeros_like(box_loss),
-                    'edge_exists': torch.zeros_like(box_loss), 'edge_feats': torch.zeros_like(box_loss),
+                    'edge_exists': torch.zeros_like(box_loss),
                     'sym': torch.zeros_like(box_loss), 'adj': torch.zeros_like(box_loss)}, box, box
         else:
             child_feats, child_sem_logits, child_exists_logits, edge_exists_logits = \
@@ -695,7 +695,6 @@ class RecursiveDecoder(nn.Module):
                 child_exists_loss = child_exists_loss + child_losses['exists']
                 semantic_loss = semantic_loss + child_losses['semantic']
                 edge_exists_loss = edge_exists_loss + child_losses['edge_exists']
-                edge_feats_loss = edge_feats_loss + child_losses['edge_feats']
                 sym_loss = sym_loss + child_losses['sym']
                 adj_loss = adj_loss + child_losses['adj']
 
@@ -725,7 +724,6 @@ class RecursiveDecoder(nn.Module):
 
             return {'box': box_loss + unused_box_loss, 'leaf': is_leaf_loss, 'anchor': anchor_loss, 
                     'exists': child_exists_loss, 'semantic': semantic_loss,
-                    'edge_exists': edge_exists_loss, 'edge_feats': edge_feats_loss,
-                    'sym': sym_loss, 'adj': adj_loss}, \
+                    'edge_exists': edge_exists_loss, 'sym': sym_loss, 'adj': adj_loss}, \
                             torch.cat(all_boxes, dim=0), torch.cat(all_leaf_boxes, dim=0)
 

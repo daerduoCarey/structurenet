@@ -1,5 +1,3 @@
-# This file contains the training script for AE experiment for reconstruction for box-represented shapes
-
 python ./train_box.py \
   --exp_name 'box_ae' \
   --category 'Chair' \

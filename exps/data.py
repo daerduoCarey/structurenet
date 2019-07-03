@@ -10,29 +10,35 @@ from collections import namedtuple
 from utils import one_hot, export_ply_with_label
 import trimesh
 
-# load meta-information for the current object category
-part_name2id = dict(); part_id2name = dict(); part_name2cids = dict(); obj_cat = None;
-def load_category_info(cat):
-    obj_cat = cat.lower()
-    with open(os.path.join('../stats/', cat+'.txt'), 'r') as fin:
-        for l in fin.readlines():
-            x, y, _ = l.rstrip().split()
-            x = int(x)
-            part_name2id[y] = x
-            part_id2name[x] = y
-            part_name2cids[y] = []
-            if '/' in y:
-                part_name2cids['/'.join(y.split('/')[:-1])].append(x)
-    num_sem = len(part_name2id) + 1
-    part_non_leaf_sem_names = []
-    for k in part_name2cids:
-        part_name2cids[k] = np.array(part_name2cids[k], dtype=np.int32)
-        if len(part_name2cids[k]) > 0:
-            part_non_leaf_sem_names.append(k)
-
-
 # store a part hierarchy of graphs for a shape
 class Tree(object):
+
+    # global object category information
+    part_name2id = dict()
+    part_id2name = dict()
+    part_name2cids = dict()
+    part_non_leaf_sem_names = []
+    num_sem = None
+    obj_cat = None
+
+    @ staticmethod
+    def load_category_info(cat):
+        Tree.obj_cat = cat.lower()
+        with open(os.path.join('../stats/', cat+'.txt'), 'r') as fin:
+            for l in fin.readlines():
+                x, y, _ = l.rstrip().split()
+                x = int(x)
+                Tree.part_name2id[y] = x
+                Tree.part_id2name[x] = y
+                Tree.part_name2cids[y] = []
+                if '/' in y:
+                    Tree.part_name2cids['/'.join(y.split('/')[:-1])].append(x)
+        Tree.num_sem = len(Tree.part_name2id) + 1
+        for k in Tree.part_name2cids:
+            Tree.part_name2cids[k] = np.array(Tree.part_name2cids[k], dtype=np.int32)
+            if len(Tree.part_name2cids[k]) > 0:
+                Tree.part_non_leaf_sem_names.append(k)
+
 
     # store a part node in the tree
     class Node(object):
@@ -71,11 +77,11 @@ class Tree(object):
             """
         
         def get_semantic_id(self):
-            return part_name2id[self.full_label]
+            return Tree.part_name2id[self.full_label]
             
         def get_semantic_one_hot(self):
-            out = np.zeros((1, num_sem), dtype=np.float32)
-            out[0, part_name2id[self.full_label]] = 1
+            out = np.zeros((1, Tree.num_sem), dtype=np.float32)
+            out[0, Tree.part_name2id[self.full_label]] = 1
             return torch.tensor(out, dtype=torch.float32).to(device=self.box.device)
             
         def get_box_quat(self):
@@ -102,8 +108,8 @@ class Tree(object):
             rotmat = q.rotation_matrix
             box = np.hstack([center, size, rotmat[:, 0].flatten(), rotmat[:, 1].flatten()]).astype(np.float32)
             self.box = torch.from_numpy(box).view(1, -1)
-
-       def to(self, device):
+            
+        def to(self, device):
             if self.box is not None:
                 self.box = self.box.to(device)
             for edge in self.edges:
