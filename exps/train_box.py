@@ -48,6 +48,10 @@ def train_vae(conf):
     print(f'Using device: {conf.device}')
     flog.write(f'Using device: {conf.device}\n')
 
+    # log the object category information
+    print(f'Object Category: {conf.category}')
+    flog.write(f'Object Category: {conf.category}\n')
+
     # control randomness
     if conf.seed < 0:
         conf.seed = random.randint(1, 10000)
@@ -62,13 +66,13 @@ def train_vae(conf):
     decoder = models.RecursiveDecoder(conf)
 
     models = [encoder, decoder]
-    model_names = ['vae_encoder', 'vae_decoder']
+    model_names = ['encoder', 'decoder']
 
     # create optimizers
     encoder_opt = torch.optim.Adam(encoder.parameters(), lr=conf.lr)
     decoder_opt = torch.optim.Adam(decoder.parameters(), lr=conf.lr)
     optimizers = [encoder_opt, decoder_opt]
-    optimizer_names = ['vae_encoder', 'vae_decoder']
+    optimizer_names = ['encoder', 'decoder']
 
     # learning rate schedular
     encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_opt, \
@@ -89,7 +93,7 @@ def train_vae(conf):
 
     # create logs
     if not conf.no_console_log:
-        header = '     Time    Epoch     Dataset    Iteration    Progress(%)             LR             BoxLoss   StructLoss    EdgeExists   KLDivLoss    SymLoss     AdjLoss      AnchorLoss    TotalLoss'
+        header = '     Time    Epoch     Dataset    Iteration    Progress(%)       LR       BoxLoss   StructLoss   EdgeExists  KLDivLoss   SymLoss    AdjLoss  AnchorLoss  TotalLoss'
     if not conf.no_tb_log:
         # https://github.com/lanpa/tensorboard-pytorch
         from tensorboardX import SummaryWriter
@@ -148,7 +152,7 @@ def train_vae(conf):
                 batch=batch, data_features=data_features, encoder=encoder, decoder=decoder, device=device, conf=conf,
                 is_valdt=False, step=train_step, epoch=epoch, batch_ind=train_batch_ind, num_batch=train_num_batch, start_time=start_time,
                 log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=train_writer, 
-                encoder_lr=encoder_opt.param_groups[0]['lr'], decoder_lr=decoder_opt.param_groups[0]['lr'], flog=flog)
+                lr=encoder_opt.param_groups[0]['lr'], flog=flog)
 
             # optimize one step
             encoder_scheduler.step()
@@ -164,10 +168,12 @@ def train_vae(conf):
                 if last_checkpoint_step is None \
                         or train_step - last_checkpoint_step >= conf.checkpoint_interval:
                     print("Saving checkpoint ...... ", end='', flush=True)
+                    flog.write("Saving checkpoint ...... ")
                     utils.save_checkpoint(
                         models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.exp_name),
                         epoch=epoch, prepend_epoch=True, optimizers=optimizers, optimizer_names=model_names)
                     print("DONE")
+                    flog.write("DONE\n")
                     last_checkpoint_step = train_step
 
             # validate one batch
@@ -192,20 +198,22 @@ def train_vae(conf):
                         batch=batch, data_features=data_features, encoder=encoder, decoder=decoder, device=device, conf=conf,
                         is_valdt=True, step=valdt_step, epoch=epoch, batch_ind=valdt_batch_ind, num_batch=valdt_num_batch, start_time=start_time,
                         log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=valdt_writer,
-                        encoder_lr=encoder_opt.param_groups[0]['lr'], decoder_lr=decoder_opt.param_groups[0]['lr'], flog=flog)
+                        lr=encoder_opt.param_groups[0]['lr'], flog=flog)
 
     # save the final models
-    print("Saving final models ...... ", end='', flush=True)
+    print("Saving final checkpoint ...... ", end='', flush=True)
+    flog.write("Saving final checkpoint ...... ")
     utils.save_checkpoint(
         models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.exp_name),
         epoch=epoch, prepend_epoch=False, optimizers=optimizers, optimizer_names=optimizer_names)
     print("DONE")
+    flog.write("DONE\n")
 
     flog.close()
 
 def forward(batch, data_features, encoder, decoder, device, conf,
             is_valdt=False, step=None, epoch=None, batch_ind=0, num_batch=1, start_time=0,
-            log_console=False, log_tb=False, tb_writer=None, encoder_lr=None, decoder_lr=None, flog=None):
+            log_console=False, log_tb=False, tb_writer=None, lr=None, flog=None):
     objects = batch[data_features.index('object')]
     
     losses = {
@@ -263,7 +271,7 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{'validation' if is_valdt else 'training':^10s} '''
                 f'''{batch_ind:>5.0f}/{num_batch:<5.0f} '''
                 f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}%      '''
-                f'''{encoder_lr:>5.2E} / {decoder_lr:>5.2E} '''
+                f'''{lr:>5.2E} '''
                 f'''{losses['box'].item():>11.2f} '''
                 f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
                 f'''{losses['edge_exists'].item():>11.2f} '''
@@ -278,7 +286,7 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{'validation' if is_valdt else 'training':^10s} '''
                 f'''{batch_ind:>5.0f}/{num_batch:<5.0f} '''
                 f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}%      '''
-                f'''{encoder_lr:>5.2E} / {decoder_lr:>5.2E} '''
+                f'''{lr:>5.2E} '''
                 f'''{losses['box'].item():>11.2f} '''
                 f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
                 f'''{losses['edge_exists'].item():>11.2f} '''
@@ -292,6 +300,7 @@ def forward(batch, data_features, encoder, decoder, device, conf,
         # log to tensorboard
         if log_tb and tb_writer is not None:
             tb_writer.add_scalar('loss', total_loss.item(), step)
+            tb_writer.add_scalar('lr', lr, step)
             tb_writer.add_scalar('box_loss', losses['box'].item(), step)
             tb_writer.add_scalar('anchor_loss', losses['anchor'].item(), step)
             tb_writer.add_scalar('leaf_loss', losses['leaf'].item(), step)

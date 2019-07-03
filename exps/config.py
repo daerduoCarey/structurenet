@@ -18,7 +18,6 @@ def add_model_args(parser):
 def add_data_args(parser):
     parser.add_argument('--data_path', type=str, default='')
     parser.add_argument('--train_dataset', type=str, default='train.txt', help='file name for the list of object names for training')
-    parser.add_argument('--max_data_tree_depth', type=int, default=-1, help='maximum hierarchy tree depth, prune above this depth')
     parser.add_argument('--edge_types', type=str, nargs='*', default=['ADJ', 'ROT_SYM', 'TRANS_SYM', 'REF_SYM'], help='list of possible edge types')
 
     return parser
@@ -32,7 +31,6 @@ def add_train_vae_args(parser):
     parser.add_argument('--val_dataset', type=str, default='val.txt', help='file name for the list of object names for validation')
 
     # model hyperparameters
-    parser.add_argument('--box_code_size', type=int, default=12)
     parser.add_argument('--geo_feat_size', type=int, default=100)
     parser.add_argument('--feature_size', type=int, default=256)
     parser.add_argument('--hidden_size', type=int, default=256)
