@@ -28,7 +28,7 @@ class Tree(object):
     @ staticmethod
     def load_category_info(cat):
         Tree.obj_cat = cat.lower()
-        with open(os.path.join('../stats/', cat+'.txt'), 'r') as fin:
+        with open(os.path.join('../stats/part_semantics/', cat+'.txt'), 'r') as fin:
             for l in fin.readlines():
                 x, y, _ = l.rstrip().split()
                 x = int(x)
