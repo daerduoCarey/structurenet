@@ -1,3 +1,7 @@
+"""
+    This file defines the Hierarchy of Graph Tree class and PartNet data loader.
+"""
+
 import sys
 import os
 import json
