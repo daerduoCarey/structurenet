@@ -93,8 +93,8 @@ def add_result_args(parser):
 def add_eval_args(parser):
     parser = add_result_args(parser)
     parser = add_data_args(parser)
-
-    parser.set_defaults(data_path='') # empty means use the training config
+    
+    parser.add_argument('--test_dataset', type=str, default='test.txt', help='file name for the list of object names for testing')
 
     return  parser
 

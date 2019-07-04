@@ -1,4 +1,7 @@
-Please download the processed PartNet hierarchy of graphs data and unzip the files here.
+Please fill in [this form](https://docs.google.com/forms/d/e/1FAIpQLSecwZKRr8is2lTLy8idmrwSMTAB0w65QpSH5BGhLD_v2p5mIw/viewform?usp=sf_link) to download the data.
+This zip file provides the processed PartNet hierarchy of graphs data for six object categories used in the paper: bed, chair, storage furniture, table, trashcan, vase.
+
+## About this repository
 
 ```
     chair_hier/                         # hierarchy of graphs data for chairs
@@ -15,4 +18,16 @@ Please download the processed PartNet hierarchy of graphs data and unzip the fil
             [PartNet_anno_id].npz       # storing all part geometry point clouds for a chair
 
 ``` 
+
+## Cite
+
+Please cite both [PartNet](https://cs.stanford.edu/~kaichun/partnet/) and StructureNet if you use this data.
+
+    @InProceedings{Mo_2019_CVPR,
+        author = {Mo, Kaichun and Zhu, Shilin and Chang, Angel X. and Yi, Li and Tripathi, Subarna and Guibas, Leonidas J. and Su, Hao},
+        title = {{PartNet}: A Large-Scale Benchmark for Fine-Grained and Hierarchical Part-Level {3D} Object Understanding},
+        booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+        month = {June},
+        year = {2019}
+    }
 

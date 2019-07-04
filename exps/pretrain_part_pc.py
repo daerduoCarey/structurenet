@@ -1,6 +1,6 @@
 """
     This is the trainer script for pretraining part point cloud AE/VAE for StructureNet point cloud experiments.
-    Use scripts/pretrain_part_pc_ae.sh or scripts/pretrain_part_pc_vae.sh to run.
+    Use scripts/pretrain_part_pc_ae_chair.sh or scripts/pretrain_part_pc_vae_chair.sh to run.
 """
 
 import os

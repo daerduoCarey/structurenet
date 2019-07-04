@@ -482,7 +482,7 @@ class GNNChildDecoder(nn.Module):
 
         # node semantics
         child_sem_logits = self.mlp_sem(child_feats.view(-1, self.hidden_size))
-        child_sem_logits = child_sem_logits.view(batch_size, self.max_child_num, num_sem)
+        child_sem_logits = child_sem_logits.view(batch_size, self.max_child_num, Tree.num_sem)
 
         # node features
         child_feats = self.mlp_child2(child_feats.view(-1, self.hidden_size))

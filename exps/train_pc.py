@@ -1,7 +1,7 @@
 """
     This is the main trainer script for point cloud AE/VAE experiments.
     Use scripts/train_ae_pc_chair.sh or scripts/train_vae_pc_chair.sh to run.
-    Before that, you need to run scripts/pretrain_part_pc_ae.sh or scripts/pretrain_part_pc_vae.sh
+    Before that, you need to run scripts/pretrain_part_pc_ae_chair.sh or scripts/pretrain_part_pc_vae_chair.sh
     to pretrain part geometry AE/VAE.
 """
 
@@ -75,7 +75,7 @@ def train(conf):
     print(f'Loading ckpt from {pretrain_ckpt_dir}: epoch {pretrain_ckpt_epoch}')
     __ = utils.load_checkpoint(
         models=[encoder.node_encoder.part_encoder, decoder.node_decoder.part_decoder], 
-        model_names=['part_encoder', 'part_decoder'],
+        model_names=['part_pc_encoder', 'part_pc_decoder'],
         dirname=pretrain_ckpt_dir,
         epoch=pretrain_ckpt_epoch,
         strict=True)
@@ -113,7 +113,7 @@ def train(conf):
 
     # create logs
     if not conf.no_console_log:
-        header = '     Time    Epoch     Dataset    Iteration    Progress(%)      LR       LatentLoss     GeoLoss     CenterLoss     ScaleLoss   StructLoss    EdgeExists    KLDivLoss    SymLoss     AdjLoss    TotalLoss'
+        header = '     Time    Epoch     Dataset    Iteration    Progress(%)      LR       LatentLoss    GeoLoss   CenterLoss   ScaleLoss   StructLoss  EdgeExists  KLDivLoss   SymLoss   AdjLoss   TotalLoss'
     if not conf.no_tb_log:
         # https://github.com/lanpa/tensorboard-pytorch
         from tensorboardX import SummaryWriter

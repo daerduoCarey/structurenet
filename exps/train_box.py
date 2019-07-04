@@ -1,5 +1,5 @@
 """
-    This is the main trainer script for box-represented AE/VAE experiments.
+    This is the main trainer script for box-shape AE/VAE experiments.
     Use scripts/train_ae_box_chair.sh or scripts/train_vae_box_chair.sh to run.
 """
 

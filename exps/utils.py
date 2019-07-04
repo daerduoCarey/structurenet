@@ -12,7 +12,6 @@ import numpy as np
 import trimesh
 
 def save_checkpoint(models, model_names, dirname, epoch=None, prepend_epoch=False, optimizers=None, optimizer_names=None):
-
     if len(models) != len(model_names) or (optimizers is not None and len(optimizers) != len(optimizer_names)):
         raise ValueError('Number of models, model names, or optimizers does not match.')
 
@@ -32,7 +31,6 @@ def save_checkpoint(models, model_names, dirname, epoch=None, prepend_epoch=Fals
         torch.save(checkpt, os.path.join(dirname, filename))
 
 def load_checkpoint(models, model_names, dirname, epoch=None, optimizers=None, optimizer_names=None, strict=True):
-
     if len(models) != len(model_names) or (optimizers is not None and len(optimizers) != len(optimizer_names)):
         raise ValueError('Number of models, model names, or optimizers does not match.')
 
@@ -116,7 +114,6 @@ def linear_assignment(distance_mat, row_counts=None, col_counts=None):
     return batch_ind, row_ind, col_ind
 
 def object_batch_boxes(objects, max_box_num):
-
     box_num = []
     boxes = torch.zeros(len(objects), 12, max_box_num)
     for oi, obj in enumerate(objects):
@@ -263,7 +260,6 @@ def get_surface_reweighting_batch(xyz, cube_num_point):
     return out
 
 def gen_obb_mesh(obbs):
-    
     # load cube
     cube_v, cube_f = load_obj('cube.obj')
 
@@ -299,5 +295,4 @@ def sample_pc(v, f, n_points=2048):
     mesh = trimesh.Trimesh(vertices=v, faces=f-1)
     points, __ = trimesh.sample.sample_surface(mesh=mesh, count=n_points)
     return points
-
 
