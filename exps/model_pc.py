@@ -535,7 +535,7 @@ class RecursiveDecoder(nn.Module):
     # decode a root code into a tree structure
     def decode_structure(self, z, max_depth):
         root_latent = self.sample_decoder(z)
-        root = self.decode_node(root_latent, max_depth, Tree.obj_cat)
+        root = self.decode_node(root_latent, max_depth, Tree.root_sem)
         obj = Tree(root=root)
         return obj
 
@@ -589,12 +589,10 @@ class RecursiveDecoder(nn.Module):
                 cur_edge_type = edge_type[i].item()
 
                 if cur_edge_from in child_idx and cur_edge_to in child_idx:
-                    edge_params = child_feats.new_zeros(self.conf.edge_feature_size)
                     child_edges.append({
                         'part_a': child_idx[cur_edge_from],
                         'part_b': child_idx[cur_edge_to],
-                        'type': self.conf.edge_types[cur_edge_type],
-                        'params': edge_params})
+                        'type': self.conf.edge_types[cur_edge_type]})
 
             return Tree.Node(is_leaf=False, children=child_nodes, edges=child_edges, \
                     full_label=full_label, label=full_label.split('/')[-1], geo=geo_global)

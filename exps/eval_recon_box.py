@@ -32,7 +32,6 @@ Tree.load_category_info(conf.category)
 
 # merge training and evaluation configurations, giving evaluation parameters precendence
 conf.__dict__.update(eval_conf.__dict__)
-print(conf)
 
 # load model
 models = utils.get_model_module(conf.model_version)
@@ -52,7 +51,7 @@ if os.path.exists(os.path.join(conf.result_path, conf.exp_name)):
 os.makedirs(os.path.join(conf.result_path, conf.exp_name))
 
 # create models
-encoder = models.RecursiveEncoder(conf, variational=True, probabilistic=not conf.non_variational)
+encoder = models.RecursiveEncoder(conf, variational=True, probabilistic=False)
 decoder = models.RecursiveDecoder(conf)
 models = [encoder, decoder]
 model_names = ['encoder', 'decoder']
@@ -322,12 +321,9 @@ with torch.no_grad():
         gt_binary_diffs.append(gt_bd)
 
         # save original and reconstructed object
-        orig_output_filename = os.path.join(conf.result_path, conf.exp_name, obj_name, 'orig', 'object.json')
-        recon_output_filename = os.path.join(conf.result_path, conf.exp_name, obj_name, 'recon', 'object.json')
-        if not os.path.exists(os.path.dirname(orig_output_filename)):
-            os.makedirs(os.path.dirname(orig_output_filename))
-        if not os.path.exists(os.path.dirname(recon_output_filename)):
-            os.makedirs(os.path.dirname(recon_output_filename))
+        os.mkdir(os.path.join(conf.result_path, conf.exp_name, obj_name))
+        orig_output_filename = os.path.join(conf.result_path, conf.exp_name, obj_name, 'orig.json')
+        recon_output_filename = os.path.join(conf.result_path, conf.exp_name, obj_name, 'recon.json')
         PartNetDataset.save_object(obj=obj, fn=orig_output_filename)
         PartNetDataset.save_object(obj=recon_obj, fn=recon_output_filename)
 

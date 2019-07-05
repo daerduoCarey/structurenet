@@ -11,7 +11,7 @@ from torch.utils import data
 from pyquaternion import Quaternion
 from sklearn.decomposition import PCA
 from collections import namedtuple
-from utils import one_hot, export_ply_with_label
+from utils import one_hot
 import trimesh
 
 # store a part hierarchy of graphs for a shape
@@ -23,11 +23,10 @@ class Tree(object):
     part_name2cids = dict()
     part_non_leaf_sem_names = []
     num_sem = None
-    obj_cat = None
+    root_sem = None
 
     @ staticmethod
     def load_category_info(cat):
-        Tree.obj_cat = cat.lower()
         with open(os.path.join('../stats/part_semantics/', cat+'.txt'), 'r') as fin:
             for l in fin.readlines():
                 x, y, _ = l.rstrip().split()
@@ -42,6 +41,7 @@ class Tree(object):
             Tree.part_name2cids[k] = np.array(Tree.part_name2cids[k], dtype=np.int32)
             if len(Tree.part_name2cids[k]) > 0:
                 Tree.part_non_leaf_sem_names.append(k)
+        Tree.root_sem = Tree.part_id2name[1]
 
 
     # store a part node in the tree
@@ -193,7 +193,6 @@ class Tree(object):
             return out_geos, out_nodes
 
         def boxes(self, per_node=False, leafs_only=False):
-
             nodes = list(reversed(self.depth_first_traversal()))
             node_boxesets = []
             boxes_stack = []
@@ -217,25 +216,29 @@ class Tree(object):
             else:
                 boxes = boxes_stack[0]
                 return boxes
-
+            
         def graph(self, leafs_only=False):
-
-            boxes = []
+            part_boxes = []
+            part_geos = []
             edges = []
-            box_ids = []
+            part_ids = []
+            part_sems = []
 
             nodes = list(reversed(self.depth_first_traversal()))
 
             box_index_offset = 0
             for node in nodes:
-
                 child_count = 0
                 box_idx = {}
                 for i, child in enumerate(node.children):
                     if leafs_only and not child.is_leaf:
                         continue
-                    boxes.append(child.box)
-                    box_ids.append(child.part_id)
+
+                    part_boxes.append(child.box)
+                    part_geos.append(child.geo)
+                    part_ids.append(child.part_id)
+                    part_sems.append(child.full_label)
+
                     box_idx[i] = child_count+box_index_offset
                     child_count += 1
 
@@ -250,10 +253,9 @@ class Tree(object):
 
                 box_index_offset += child_count
 
-            return boxes, edges, box_ids
+            return part_boxes, part_geos, edges, part_ids, part_sems
 
         def edge_tensors(self, edge_types, device, type_onehot=True):
-
             num_edges = len(self.edges)
 
             # get directed edge indices in both directions as tensor
@@ -349,7 +351,6 @@ class PartNetDataset(data.Dataset):
 
     @staticmethod
     def load_object(fn, load_geo=False):
-
         if load_geo:
             geo_fn = fn.replace('_hier', '_geo').replace('json', 'npz')
             geo_data = np.load(geo_fn)
@@ -374,6 +375,9 @@ class PartNetDataset(data.Dataset):
                 part_id=node_json['id'],
                 is_leaf=('children' not in node_json),
                 label=node_json['label'])
+
+            if 'geo' in node_json.keys():
+                node.geo = torch.tensor(np.array(node_json['geo']), dtype=torch.float32).view(1, -1, 3)
 
             if load_geo:
                 node.geo = torch.tensor(geo_data['parts'][node_json['id']], dtype=torch.float32).view(1, -1, 3)
@@ -412,7 +416,6 @@ class PartNetDataset(data.Dataset):
         stack = [StackElement(node=obj.root, parent_json=None, parent_child_idx=None)]
 
         obj_json = None
-        pc = []; label = []; label_id = 0;
 
         # traverse the tree, converting child nodes of each node to json
         while len(stack) > 0:
@@ -426,13 +429,8 @@ class PartNetDataset(data.Dataset):
                 'id': node.part_id,
                 'label': f'{node.label if node.label is not None else ""}'}
 
-            if node.geo is not None and node.is_leaf:
-                cur_pc = node.geo.cpu().numpy().reshape(-1, 3)
-                n_point = cur_pc.shape[0]
-                cur_label = np.ones((n_point), dtype=np.int32) * label_id
-                pc.append(cur_pc)
-                label.append(cur_label)
-                label_id += 1
+            if node.geo is not None:
+                node_json['geo'] = node.geo.cpu().numpy().reshape(-1).tolist()
 
             if node.box is not None:
                 node_json['box'] = node.box.cpu().numpy().reshape(-1).tolist()
@@ -457,9 +455,4 @@ class PartNetDataset(data.Dataset):
 
         with open(fn, 'w') as f:
             json.dump(obj_json, f)
-
-        if len(pc) > 0:
-            pc = np.vstack(pc)
-            label = np.hstack(label)
-            export_ply_with_label(fn.replace('.json', '.ply'), pc, label)
 

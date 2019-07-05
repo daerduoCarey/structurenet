@@ -450,7 +450,7 @@ class RecursiveDecoder(nn.Module):
     # decode a root code into a tree structure
     def decode_structure(self, z, max_depth):
         root_latent = self.sample_decoder(z)
-        root = self.decode_node(root_latent, max_depth, Tree.obj_cat)
+        root = self.decode_node(root_latent, max_depth, Tree.root_sem)
         obj = Tree(root=root)
         return obj
 

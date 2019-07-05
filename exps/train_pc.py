@@ -63,6 +63,9 @@ def train(conf):
     np.random.seed(conf.seed)
     torch.manual_seed(conf.seed)
 
+    # save config
+    torch.save(conf, os.path.join(conf.model_path, conf.exp_name, 'conf.pth'))
+
     # create models
     encoder = models.RecursiveEncoder(conf, variational=True, probabilistic=not conf.non_variational)
     decoder = models.RecursiveDecoder(conf)
@@ -119,9 +122,6 @@ def train(conf):
         from tensorboardX import SummaryWriter
         train_writer = SummaryWriter(os.path.join(conf.log_path, conf.exp_name, 'train'))
         valdt_writer = SummaryWriter(os.path.join(conf.log_path, conf.exp_name, 'val'))
-
-    # save config
-    torch.save(conf, os.path.join(conf.model_path, conf.exp_name, 'conf.pth'))
 
     # send parameters to device
     for m in models:
