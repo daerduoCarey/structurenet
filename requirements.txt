@@ -1,4 +1,5 @@
 json
+jupyter
 collections
 numpy
 scipy

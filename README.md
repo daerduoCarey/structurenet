@@ -34,9 +34,10 @@ This repository provides data and code as follows.
 
 
 ```
-    data/                   # contains data
-    exps/                   # contains code
-    stats/                  # contains stats
+    data/                   # contains data, models, results, logs
+    exps/                   # contains code and scripts
+         # please follow `exps/README.md` to run the codes 
+    stats/                  # contains helper statistics
 ```
 
 ## Questions

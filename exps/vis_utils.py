@@ -1,6 +1,6 @@
 """
     This file contains utility functions for jupyter notebook visualization.
-    Please use jupyter notebook to open vis_box.ipynb or vis_geo.ipynb for results visualization.
+    Please use jupyter notebook to open vis_box.ipynb or vis_pc.ipynb for results visualization.
 """
 
 import numpy as np
