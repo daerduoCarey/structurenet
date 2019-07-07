@@ -13,8 +13,6 @@ This zip file provides the processed PartNet hierarchy of graphs data for six ob
                                         # Subsets of data used in StructureNet where all parts are labeled 
                                         # and no more than 10 parts per parent node
                                         # We use this subset for StructureNet
-            semantics.txt               # PartNet defined part semantics
-            semantic_colors.txt         # colors assigned to each part semantic for visualization
     chair_geo/                          # part geometry point clouds for chairs
             [PartNet_anno_id].npz       # storing all part geometry point clouds for a chair
 
