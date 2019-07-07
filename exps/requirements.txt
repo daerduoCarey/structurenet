@@ -1,4 +1,3 @@
-collections
 numpy
 scipy
 sklearn
@@ -8,4 +7,3 @@ tensorboardX
 trimesh
 torch>=1.1.0
 torchvision
-torch-scatter==1.2.0

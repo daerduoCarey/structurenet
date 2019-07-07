@@ -6,13 +6,17 @@ To train the models, please first go to `data/partnetdata/` folder and download 
 To test over the pretrained models, please go to `data/models/` folder and download the pretrained checkpoints.
 
 ## Dependencies
-This code has been tested using Python 3.6.5, PyTorch 1.1.0, Jupyter IPython Notebook 5.7.8. 
+This code has been tested on Ubuntu 16.04 with Cuda 9.0, Python 3.6.5, PyTorch 1.1.0, Jupyter IPython Notebook 5.7.8. 
 
 Please run
     
     pip3 install -r requirements.txt
 
 to install the other dependencies.
+
+Then, install https://github.com/rusty1s/pytorch_scatter by running
+
+    pip3 install torch-scatter
 
 
 ## Box-shape AE Reconstruction
