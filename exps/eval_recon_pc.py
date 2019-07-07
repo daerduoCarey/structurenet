@@ -72,6 +72,7 @@ for m in models:
 for m in models:
     m.eval()
 
+# test over all test shapes
 num_batch = len(dataloader)
 with torch.no_grad():
     for batch_ind, batch in enumerate(dataloader):

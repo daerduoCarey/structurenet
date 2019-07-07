@@ -270,7 +270,7 @@ def compute_binary_diff(pred_node):
 
         return binary_diff, binary_tot
 
-# main
+# test over all test shapes
 num_batch = len(dataloader)
 chamfer_dists = []
 structure_dists = []

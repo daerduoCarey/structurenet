@@ -66,6 +66,7 @@ for m in models:
 for m in models:
     m.eval()
 
+# generate shapes
 with torch.no_grad():
     gen_pcs = []; gen_objs = [];
     for i in range(conf.num_gen):
