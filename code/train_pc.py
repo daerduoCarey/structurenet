@@ -1,6 +1,8 @@
 """
-    This is the main trainer script for box-shape AE/VAE experiments.
-    Use scripts/train_ae_box_chair.sh or scripts/train_vae_box_chair.sh to run.
+    This is the main trainer script for point cloud AE/VAE experiments.
+    Use scripts/train_ae_pc_chair.sh or scripts/train_vae_pc_chair.sh to run.
+    Before that, you need to run scripts/pretrain_part_pc_ae_chair.sh or scripts/pretrain_part_pc_vae_chair.sh
+    to pretrain part geometry AE/VAE.
 """
 
 import os
@@ -40,9 +42,9 @@ def train(conf):
     os.makedirs(os.path.join(conf.model_path, conf.exp_name))
     os.makedirs(os.path.join(conf.log_path, conf.exp_name))
 
-    # flog
+    # file log
     flog = open(os.path.join(conf.log_path, conf.exp_name, 'train.log'), 'w')
-    
+
     # set training device
     device = torch.device(conf.device)
     print(f'Using device: {conf.device}')
@@ -70,13 +72,32 @@ def train(conf):
     models = [encoder, decoder]
     model_names = ['encoder', 'decoder']
 
+    # load pretrained part AE/VAE
+    pretrain_ckpt_dir = os.path.join(conf.model_path, conf.part_pc_exp_name)
+    pretrain_ckpt_epoch = conf.part_pc_model_epoch
+    print(f'Loading ckpt from {pretrain_ckpt_dir}: epoch {pretrain_ckpt_epoch}')
+    __ = utils.load_checkpoint(
+        models=[encoder.node_encoder.part_encoder, decoder.node_decoder.part_decoder],
+        model_names=['part_pc_encoder', 'part_pc_decoder'],
+        dirname=pretrain_ckpt_dir,
+        epoch=pretrain_ckpt_epoch,
+        strict=True)
+
+    # set part_encoder and part_decoder BatchNorm to eval mode
+    encoder.node_encoder.part_encoder.eval()
+    for param in encoder.node_encoder.part_encoder.parameters():
+        param.requires_grad = False
+    decoder.node_decoder.part_decoder.eval()
+    for param in decoder.node_decoder.part_decoder.parameters():
+        param.requires_grad = False
+
     # create optimizers
     encoder_opt = torch.optim.Adam(encoder.parameters(), lr=conf.lr)
     decoder_opt = torch.optim.Adam(decoder.parameters(), lr=conf.lr)
     optimizers = [encoder_opt, decoder_opt]
     optimizer_names = ['encoder', 'decoder']
 
-    # learning rate schedular
+    # learning rate scheduler
     encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_opt, \
             step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
     decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_opt, \
@@ -95,7 +116,7 @@ def train(conf):
 
     # create logs
     if not conf.no_console_log:
-        header = '     Time    Epoch     Dataset    Iteration    Progress(%)       LR       BoxLoss   StructLoss   EdgeExists  KLDivLoss   SymLoss    AdjLoss  AnchorLoss  TotalLoss'
+        header = '     Time    Epoch     Dataset    Iteration    Progress(%)      LR       LatentLoss    GeoLoss   CenterLoss   ScaleLoss   StructLoss  EdgeExists  KLDivLoss   SymLoss   AdjLoss   TotalLoss'
     if not conf.no_tb_log:
         # https://github.com/lanpa/tensorboard-pytorch
         from tensorboardX import SummaryWriter
@@ -142,15 +163,16 @@ def train(conf):
             if log_console:
                 last_train_console_log_step = train_step
 
-            # set models to training mode
+            # make sure the models are in eval mode to deactivate BatchNorm for PartEncoder and PartDecoder
+            # there are no other BatchNorm / Dropout in the rest of the network
             for m in models:
-                m.train()
+                m.eval()
 
             # forward pass (including logging)
             total_loss = forward(
                 batch=batch, data_features=data_features, encoder=encoder, decoder=decoder, device=device, conf=conf,
                 is_valdt=False, step=train_step, epoch=epoch, batch_ind=train_batch_ind, num_batch=train_num_batch, start_time=start_time,
-                log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=train_writer, 
+                log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=train_writer,
                 lr=encoder_opt.param_groups[0]['lr'], flog=flog)
 
             # optimize one step
@@ -214,10 +236,12 @@ def forward(batch, data_features, encoder, decoder, device, conf,
             is_valdt=False, step=None, epoch=None, batch_ind=0, num_batch=1, start_time=0,
             log_console=False, log_tb=False, tb_writer=None, lr=None, flog=None):
     objects = batch[data_features.index('object')]
-    
+
     losses = {
-        'box': torch.zeros(1, device=device),
-        'anchor': torch.zeros(1, device=device),
+        'latent': torch.zeros(1, device=device),
+        'geo': torch.zeros(1, device=device),
+        'center': torch.zeros(1, device=device),
+        'scale': torch.zeros(1, device=device),
         'leaf': torch.zeros(1, device=device),
         'exists': torch.zeros(1, device=device),
         'semantic': torch.zeros(1, device=device),
@@ -225,7 +249,7 @@ def forward(batch, data_features, encoder, decoder, device, conf,
         'kldiv': torch.zeros(1, device=device),
         'sym': torch.zeros(1, device=device),
         'adj': torch.zeros(1, device=device)}
-    
+
     # process every data in the batch individually
     for obj in objects:
         obj.to(device)
@@ -247,8 +271,10 @@ def forward(batch, data_features, encoder, decoder, device, conf,
     for loss_name in losses.keys():
         losses[loss_name] = losses[loss_name] / len(objects)
 
-    losses['box'] *= conf.loss_weight_box
-    losses['anchor'] *= conf.loss_weight_anchor
+    losses['latent'] *= conf.loss_weight_latent
+    losses['geo'] *= conf.loss_weight_geo
+    losses['center'] *= conf.loss_weight_center
+    losses['scale'] *= conf.loss_weight_scale
     losses['leaf'] *= conf.loss_weight_leaf
     losses['exists'] *= conf.loss_weight_exists
     losses['semantic'] *= conf.loss_weight_semantic
@@ -271,13 +297,15 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{batch_ind:>5.0f}/{num_batch:<5.0f} '''
                 f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}%      '''
                 f'''{lr:>5.2E} '''
-                f'''{losses['box'].item():>11.2f} '''
+                f'''{losses['latent'].item():>11.2f} '''
+                f'''{losses['geo'].item():>11.2f} '''
+                f'''{losses['center'].item():>11.2f} '''
+                f'''{losses['scale'].item():>11.2f} '''
                 f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
                 f'''{losses['edge_exists'].item():>11.2f} '''
                 f'''{losses['kldiv'].item():>10.2f} '''
                 f'''{losses['sym'].item():>10.2f} '''
                 f'''{losses['adj'].item():>10.2f} '''
-                f'''{losses['anchor'].item():>10.2f} '''
                 f'''{total_loss.item():>10.2f}''')
             flog.write(
                 f'''{strftime("%H:%M:%S", time.gmtime(time.time()-start_time)):>9s} '''
@@ -286,13 +314,15 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{batch_ind:>5.0f}/{num_batch:<5.0f} '''
                 f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}%      '''
                 f'''{lr:>5.2E} '''
-                f'''{losses['box'].item():>11.2f} '''
+                f'''{losses['latent'].item():>11.2f} '''
+                f'''{losses['geo'].item():>11.2f} '''
+                f'''{losses['center'].item():>11.2f} '''
+                f'''{losses['scale'].item():>11.2f} '''
                 f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
                 f'''{losses['edge_exists'].item():>11.2f} '''
                 f'''{losses['kldiv'].item():>10.2f} '''
                 f'''{losses['sym'].item():>10.2f} '''
                 f'''{losses['adj'].item():>10.2f} '''
-                f'''{losses['anchor'].item():>10.2f} '''
                 f'''{total_loss.item():>10.2f}\n''')
             flog.flush()
 
@@ -300,8 +330,10 @@ def forward(batch, data_features, encoder, decoder, device, conf,
         if log_tb and tb_writer is not None:
             tb_writer.add_scalar('loss', total_loss.item(), step)
             tb_writer.add_scalar('lr', lr, step)
-            tb_writer.add_scalar('box_loss', losses['box'].item(), step)
-            tb_writer.add_scalar('anchor_loss', losses['anchor'].item(), step)
+            tb_writer.add_scalar('latent_loss', losses['latent'].item(), step)
+            tb_writer.add_scalar('geo_loss', losses['geo'].item(), step)
+            tb_writer.add_scalar('center_loss', losses['center'].item(), step)
+            tb_writer.add_scalar('scale_loss', losses['scale'].item(), step)
             tb_writer.add_scalar('leaf_loss', losses['leaf'].item(), step)
             tb_writer.add_scalar('exists_loss', losses['exists'].item(), step)
             tb_writer.add_scalar('semantic_loss', losses['semantic'].item(), step)

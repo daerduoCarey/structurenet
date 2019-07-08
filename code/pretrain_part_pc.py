@@ -1,8 +1,6 @@
 """
-    This is the main trainer script for point cloud AE/VAE experiments.
-    Use scripts/train_ae_pc_chair.sh or scripts/train_vae_pc_chair.sh to run.
-    Before that, you need to run scripts/pretrain_part_pc_ae_chair.sh or scripts/pretrain_part_pc_vae_chair.sh
-    to pretrain part geometry AE/VAE.
+    This is the trainer script for pretraining part point cloud AE/VAE for StructureNet point cloud experiments.
+    Use scripts/pretrain_part_pc_ae_chair.sh or scripts/pretrain_part_pc_vae_chair.sh to run.
 """
 
 import os
@@ -16,18 +14,46 @@ import numpy as np
 import torch
 import torch.utils.data
 from config import add_train_vae_args
-from data import PartNetDataset, Tree
 import utils
 
 # Use 1-4 CPU threads to train.
 # Don't use too many CPU threads, which will slow down the training.
 torch.set_num_threads(2)
 
+"""
+    For each shape, randomly sample a part to feed to the network.
+    If use_local_frame=True, we re-center and re-scale the part into
+    a unit sphere before feeding to the network.
+"""
+class PartNetGeoDataset(torch.utils.data.Dataset):
+    def __init__(self, root, object_list, use_local_frame):
+        self.root = root
+        self.use_local_frame = use_local_frame
+
+        if isinstance(object_list, str):
+            with open(os.path.join(root, object_list), 'r') as f:
+                self.object_names = [item.rstrip() for item in f.readlines()]
+        else:
+            self.object_names = object_list
+
+    def __getitem__(self, index):
+        fn = os.path.join(self.root, self.object_names[index]+'.npz')
+        data = np.load(fn)['parts']
+        idx = np.random.randint(data.shape[0])
+        pts = torch.tensor(data[idx, :, :], dtype=torch.float32)
+        if self.use_local_frame:
+            pts = pts - pts.mean(dim=0)
+            pts = pts / pts.pow(2).sum(dim=1).max().sqrt()
+        return (pts, self.object_names[index], idx)
+
+    def __len__(self):
+        return len(self.object_names)
+
 def train(conf):
     # load network model
     models = utils.get_model_module(conf.model_version)
 
-    # check if training run already exists. If so, delete it. 
+    # check if training run already exists. If so, delete it.
     if os.path.exists(os.path.join(conf.log_path, conf.exp_name)) or \
        os.path.exists(os.path.join(conf.model_path, conf.exp_name)):
         response = input('A training run named "%s" already exists, overwrite? (y/n) ' % (conf.exp_name))
@@ -37,12 +63,12 @@ def train(conf):
         shutil.rmtree(os.path.join(conf.log_path, conf.exp_name))
     if os.path.exists(os.path.join(conf.model_path, conf.exp_name)):
         shutil.rmtree(os.path.join(conf.model_path, conf.exp_name))
-    
+
     # create directories for this run
     os.makedirs(os.path.join(conf.model_path, conf.exp_name))
     os.makedirs(os.path.join(conf.log_path, conf.exp_name))
 
-    # flog
+    # file log
     flog = open(os.path.join(conf.log_path, conf.exp_name, 'train.log'), 'w')
 
     # set training device
@@ -63,52 +89,27 @@ def train(conf):
     np.random.seed(conf.seed)
     torch.manual_seed(conf.seed)
 
-    # save config
-    torch.save(conf, os.path.join(conf.model_path, conf.exp_name, 'conf.pth'))
-
     # create models
-    encoder = models.RecursiveEncoder(conf, variational=True, probabilistic=not conf.non_variational)
-    decoder = models.RecursiveDecoder(conf)
+    encoder = models.PartEncoder(feat_len=conf.geo_feat_size, probabilistic=not conf.non_variational)
+    decoder = models.PartDecoder(feat_len=conf.geo_feat_size, num_point=conf.num_point)
     models = [encoder, decoder]
-    model_names = ['encoder', 'decoder']
-
-    # load pretrained part AE/VAE
-    pretrain_ckpt_dir = os.path.join(conf.model_path, conf.part_pc_exp_name)
-    pretrain_ckpt_epoch = conf.part_pc_model_epoch
-    print(f'Loading ckpt from {pretrain_ckpt_dir}: epoch {pretrain_ckpt_epoch}')
-    __ = utils.load_checkpoint(
-        models=[encoder.node_encoder.part_encoder, decoder.node_decoder.part_decoder], 
-        model_names=['part_pc_encoder', 'part_pc_decoder'],
-        dirname=pretrain_ckpt_dir,
-        epoch=pretrain_ckpt_epoch,
-        strict=True)
-
-    # set part_encoder and part_decoder BatchNorm to eval mode
-    encoder.node_encoder.part_encoder.eval()
-    for param in encoder.node_encoder.part_encoder.parameters():
-        param.requires_grad = False
-    decoder.node_decoder.part_decoder.eval()
-    for param in decoder.node_decoder.part_decoder.parameters():
-        param.requires_grad = False
+    model_names = ['part_pc_encoder', 'part_pc_decoder']
 
     # create optimizers
-    encoder_opt = torch.optim.Adam(encoder.parameters(), lr=conf.lr)
-    decoder_opt = torch.optim.Adam(decoder.parameters(), lr=conf.lr)
+    encoder_opt = torch.optim.Adam(encoder.parameters(), lr=conf.lr, weight_decay=conf.weight_decay)
+    decoder_opt = torch.optim.Adam(decoder.parameters(), lr=conf.lr, weight_decay=conf.weight_decay)
     optimizers = [encoder_opt, decoder_opt]
-    optimizer_names = ['encoder', 'decoder']
+    optimizer_names = ['part_pc_encoder', 'part_pc_decoder']
 
-    # learning rate schedular
+    # learning rate scheduler
     encoder_scheduler = torch.optim.lr_scheduler.StepLR(encoder_opt, \
             step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
     decoder_scheduler = torch.optim.lr_scheduler.StepLR(decoder_opt, \
             step_size=conf.lr_decay_every, gamma=conf.lr_decay_by)
 
     # create training and validation datasets and data loaders
-    data_features = ['object']
-    train_dataset = PartNetDataset(conf.data_path, conf.train_dataset, data_features, \
-            load_geo=conf.load_geo)
-    valdt_dataset = PartNetDataset(conf.data_path, conf.val_dataset, data_features, \
-            load_geo=conf.load_geo)
+    train_dataset = PartNetGeoDataset(conf.data_path, conf.train_dataset, use_local_frame=conf.use_local_frame)
+    valdt_dataset = PartNetGeoDataset(conf.data_path, conf.val_dataset, use_local_frame=conf.use_local_frame)
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=conf.batch_size, \
             shuffle=True, collate_fn=utils.collate_feats)
     valdt_dataloader = torch.utils.data.DataLoader(valdt_dataset, batch_size=conf.batch_size, \
@@ -116,12 +117,15 @@ def train(conf):
 
     # create logs
     if not conf.no_console_log:
-        header = '     Time    Epoch     Dataset    Iteration    Progress(%)      LR       LatentLoss    GeoLoss   CenterLoss   ScaleLoss   StructLoss  EdgeExists  KLDivLoss   SymLoss   AdjLoss   TotalLoss'
+        header = '     Time    Epoch    Dataset    Iteration    Progress(%)     LR      ReconLoss  KLDivLoss  TotalLoss'
     if not conf.no_tb_log:
         # https://github.com/lanpa/tensorboard-pytorch
         from tensorboardX import SummaryWriter
         train_writer = SummaryWriter(os.path.join(conf.log_path, conf.exp_name, 'train'))
         valdt_writer = SummaryWriter(os.path.join(conf.log_path, conf.exp_name, 'val'))
+
+    # save config
+    torch.save(conf, os.path.join(conf.model_path, conf.exp_name, 'conf.pth'))
 
     # send parameters to device
     for m in models:
@@ -163,16 +167,16 @@ def train(conf):
             if log_console:
                 last_train_console_log_step = train_step
 
-            # make sure the models are in eval mode to deactivate BatchNorm for PartEncoder and PartDecoder
-            # there are no other BatchNorm / Dropout in the rest of the network
+            # set models to training mode
             for m in models:
-                m.eval()
+                m.train()
 
             # forward pass (including logging)
             total_loss = forward(
-                batch=batch, data_features=data_features, encoder=encoder, decoder=decoder, device=device, conf=conf,
-                is_valdt=False, step=train_step, epoch=epoch, batch_ind=train_batch_ind, num_batch=train_num_batch, start_time=start_time,
-                log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=train_writer, 
+                batch=batch, encoder=encoder, decoder=decoder, device=device, conf=conf,
+                is_valdt=False, step=train_step, epoch=epoch, batch_ind=train_batch_ind,
+                num_batch=train_num_batch, start_time=start_time,
+                log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=train_writer,
                 lr=encoder_opt.param_groups[0]['lr'], flog=flog)
 
             # optimize one step
@@ -216,14 +220,15 @@ def train(conf):
                 with torch.no_grad():
                     # forward pass (including logging)
                     __ = forward(
-                        batch=batch, data_features=data_features, encoder=encoder, decoder=decoder, device=device, conf=conf,
-                        is_valdt=True, step=valdt_step, epoch=epoch, batch_ind=valdt_batch_ind, num_batch=valdt_num_batch, start_time=start_time,
+                        batch=batch, encoder=encoder, decoder=decoder, device=device, conf=conf,
+                        is_valdt=True, step=valdt_step, epoch=epoch, batch_ind=valdt_batch_ind,
+                        num_batch=valdt_num_batch, start_time=start_time,
                         log_console=log_console, log_tb=not conf.no_tb_log, tb_writer=valdt_writer,
                         lr=encoder_opt.param_groups[0]['lr'], flog=flog)
 
     # save the final models
     print("Saving final checkpoint ...... ", end='', flush=True)
-    flog.write("Saving final checkpoint ...... ")
+    flog.write('Saving final checkpoint ...... ')
     utils.save_checkpoint(
         models=models, model_names=model_names, dirname=os.path.join(conf.model_path, conf.exp_name),
         epoch=epoch, prepend_epoch=False, optimizers=optimizers, optimizer_names=optimizer_names)
@@ -232,60 +237,24 @@ def train(conf):
 
     flog.close()
 
-def forward(batch, data_features, encoder, decoder, device, conf,
+
+def forward(batch, encoder, decoder, device, conf,
             is_valdt=False, step=None, epoch=None, batch_ind=0, num_batch=1, start_time=0,
             log_console=False, log_tb=False, tb_writer=None, lr=None, flog=None):
-    objects = batch[data_features.index('object')]
-    
-    losses = {
-        'latent': torch.zeros(1, device=device),
-        'geo': torch.zeros(1, device=device),
-        'center': torch.zeros(1, device=device),
-        'scale': torch.zeros(1, device=device),
-        'leaf': torch.zeros(1, device=device),
-        'exists': torch.zeros(1, device=device),
-        'semantic': torch.zeros(1, device=device),
-        'edge_exists': torch.zeros(1, device=device),
-        'kldiv': torch.zeros(1, device=device),
-        'sym': torch.zeros(1, device=device),
-        'adj': torch.zeros(1, device=device)}
- 
-    # process every data in the batch individually
-    for obj in objects:
-        obj.to(device)
+    pts = torch.cat([item.unsqueeze(dim=0) for item in batch[0]], dim=0).to(device)
 
-        # encode object to get root code
-        root_code = encoder.encode_structure(obj=obj)
+    net = encoder(pts)
 
-        # get kldiv loss
-        if not conf.non_variational:
-            root_code, obj_kldiv_loss = torch.chunk(root_code, 2, 1)
-            obj_kldiv_loss = -obj_kldiv_loss.sum() # negative kldiv, sum over feature dimensions
-            losses['kldiv'] = losses['kldiv'] + obj_kldiv_loss
+    if not conf.non_variational:
+        net, kldiv_loss = torch.chunk(net, 2, 1)
+        kldiv_loss = -kldiv_loss.sum(dim=1).mean()
+    else:
+        kldiv_loss = net.new_tensor(0)
 
-        # decode root code to get reconstruction loss
-        obj_losses = decoder.structure_recon_loss(z=root_code, gt_tree=obj)
-        for loss_name, loss in obj_losses.items():
-            losses[loss_name] = losses[loss_name] + loss
+    pred = decoder(net)
+    recon_loss = decoder.loss(pred, pts)
 
-    for loss_name in losses.keys():
-        losses[loss_name] = losses[loss_name] / len(objects)
-
-    losses['latent'] *= conf.loss_weight_latent
-    losses['geo'] *= conf.loss_weight_geo
-    losses['center'] *= conf.loss_weight_center
-    losses['scale'] *= conf.loss_weight_scale
-    losses['leaf'] *= conf.loss_weight_leaf
-    losses['exists'] *= conf.loss_weight_exists
-    losses['semantic'] *= conf.loss_weight_semantic
-    losses['edge_exists'] *= conf.loss_weight_edge_exists
-    losses['kldiv'] *= conf.loss_weight_kldiv
-    losses['sym'] *= conf.loss_weight_sym
-    losses['adj'] *= conf.loss_weight_adj
-
-    total_loss = 0
-    for loss in losses.values():
-        total_loss += loss
+    total_loss = recon_loss + kldiv_loss * conf.loss_weight_kldiv
 
     with torch.no_grad():
         # log to console
@@ -295,34 +264,20 @@ def forward(batch, data_features, encoder, decoder, device, conf,
                 f'''{epoch:>5.0f}/{conf.epochs:<5.0f} '''
                 f'''{'validation' if is_valdt else 'training':^10s} '''
                 f'''{batch_ind:>5.0f}/{num_batch:<5.0f} '''
-                f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}%      '''
+                f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}% '''
                 f'''{lr:>5.2E} '''
-                f'''{losses['latent'].item():>11.2f} '''
-                f'''{losses['geo'].item():>11.2f} '''
-                f'''{losses['center'].item():>11.2f} '''
-                f'''{losses['scale'].item():>11.2f} '''
-                f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
-                f'''{losses['edge_exists'].item():>11.2f} '''
-                f'''{losses['kldiv'].item():>10.2f} '''
-                f'''{losses['sym'].item():>10.2f} '''
-                f'''{losses['adj'].item():>10.2f} '''
+                f'''{recon_loss.item():>11.2f} '''
+                f'''{kldiv_loss.item() if not conf.non_variational else 0:>10.2f} '''
                 f'''{total_loss.item():>10.2f}''')
             flog.write(
                 f'''{strftime("%H:%M:%S", time.gmtime(time.time()-start_time)):>9s} '''
                 f'''{epoch:>5.0f}/{conf.epochs:<5.0f} '''
                 f'''{'validation' if is_valdt else 'training':^10s} '''
                 f'''{batch_ind:>5.0f}/{num_batch:<5.0f} '''
-                f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}%      '''
+                f'''{100. * (1+batch_ind+num_batch*epoch) / (num_batch*conf.epochs):>9.1f}% '''
                 f'''{lr:>5.2E} '''
-                f'''{losses['latent'].item():>11.2f} '''
-                f'''{losses['geo'].item():>11.2f} '''
-                f'''{losses['center'].item():>11.2f} '''
-                f'''{losses['scale'].item():>11.2f} '''
-                f'''{(losses['leaf']+losses['exists']+losses['semantic']).item():>11.2f} '''
-                f'''{losses['edge_exists'].item():>11.2f} '''
-                f'''{losses['kldiv'].item():>10.2f} '''
-                f'''{losses['sym'].item():>10.2f} '''
-                f'''{losses['adj'].item():>10.2f} '''
+                f'''{recon_loss.item():>11.2f} '''
+                f'''{kldiv_loss.item() if not conf.non_variational else 0:>10.2f} '''
                 f'''{total_loss.item():>10.2f}\n''')
             flog.flush()
 
@@ -330,27 +285,20 @@ def forward(batch, data_features, encoder, decoder, device, conf,
         if log_tb and tb_writer is not None:
             tb_writer.add_scalar('loss', total_loss.item(), step)
             tb_writer.add_scalar('lr', lr, step)
-            tb_writer.add_scalar('latent_loss', losses['latent'].item(), step)
-            tb_writer.add_scalar('geo_loss', losses['geo'].item(), step)
-            tb_writer.add_scalar('center_loss', losses['center'].item(), step)
-            tb_writer.add_scalar('scale_loss', losses['scale'].item(), step)
-            tb_writer.add_scalar('leaf_loss', losses['leaf'].item(), step)
-            tb_writer.add_scalar('exists_loss', losses['exists'].item(), step)
-            tb_writer.add_scalar('semantic_loss', losses['semantic'].item(), step)
-            tb_writer.add_scalar('edge_exists_loss', losses['edge_exists'].item(), step)
-            tb_writer.add_scalar('kldiv_loss', losses['kldiv'].item(), step)
-            tb_writer.add_scalar('sym_loss', losses['sym'].item(), step)
-            tb_writer.add_scalar('adj_loss', losses['adj'].item(), step)
+            tb_writer.add_scalar('recon_loss', recon_loss.item(), step)
+            if not conf.non_variational:
+                tb_writer.add_scalar('kldiv_loss', kldiv_loss.item(), step)
 
     return total_loss
+
 
 if __name__ == '__main__':
     sys.setrecursionlimit(5000) # this code uses recursion a lot for code simplicity
 
     parser = ArgumentParser()
     parser = add_train_vae_args(parser)
+    parser.add_argument('--use_local_frame', action='store_true', default=False, help='factorize out 3-dim center + 1-dim scale')
     config = parser.parse_args()
 
-    Tree.load_category_info(config.category)
-    train(config)
+    train(conf=config)
 

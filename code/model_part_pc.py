@@ -90,4 +90,3 @@ class PartDecoder(nn.Module):
         avg_loss = loss.mean() * 1000
 
         return avg_loss
-
