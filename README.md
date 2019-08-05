@@ -21,12 +21,17 @@ and [Leonidas J. Guibas](https://geometry.stanford.edu/member/guibas/)
 from 
 Stanford University, University College London (UCL), University of California San Diego (UCSD), King Abdullah University of Science and Technology (KAUST), Adobe Research and Facebook AI Research.
 
-Arxiv Version: xxx
+Arxiv Version: https://arxiv.org/abs/1908.00575
 
 Project Page: https://cs.stanford.edu/~kaichun/structurenet/
 
 ## Citations
-xxx
+@article{mo2019structurenet,
+      title={StructureNet: Hierarchical Graph Networks for 3D Shape Generation},
+      author={Mo, Kaichun and Guerrero, Paul and Yi, Li and Su, Hao and Wonka, Peter and Mitra, Niloy and Guibas, Leonidas},
+      journal={arXiv preprint arXiv:1908.00575},
+      year={2019}
+}
 
 ## About this repository
 

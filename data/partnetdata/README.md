@@ -22,6 +22,13 @@ This zip file provides the processed PartNet hierarchy of graphs data for six ob
 
 Please cite both [PartNet](https://cs.stanford.edu/~kaichun/partnet/) and StructureNet if you use this data.
 
+    @article{mo2019structurenet,
+        title={StructureNet: Hierarchical Graph Networks for 3D Shape Generation},
+        author={Mo, Kaichun and Guerrero, Paul and Yi, Li and Su, Hao and Wonka, Peter and Mitra, Niloy and Guibas, Leonidas},
+        journal={arXiv preprint arXiv:1908.00575},
+        year={2019}
+    }
+
     @InProceedings{Mo_2019_CVPR,
         author = {Mo, Kaichun and Zhu, Shilin and Chang, Angel X. and Yi, Li and Tripathi, Subarna and Guibas, Leonidas J. and Su, Hao},
         title = {{PartNet}: A Large-Scale Benchmark for Fine-Grained and Hierarchical Part-Level {3D} Object Understanding},
