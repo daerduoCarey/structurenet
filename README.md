@@ -26,12 +26,12 @@ Arxiv Version: https://arxiv.org/abs/1908.00575
 Project Page: https://cs.stanford.edu/~kaichun/structurenet/
 
 ## Citations
-@article{mo2019structurenet,
-      title={StructureNet: Hierarchical Graph Networks for 3D Shape Generation},
-      author={Mo, Kaichun and Guerrero, Paul and Yi, Li and Su, Hao and Wonka, Peter and Mitra, Niloy and Guibas, Leonidas},
-      journal={arXiv preprint arXiv:1908.00575},
-      year={2019}
-}
+    @article{mo2019structurenet,
+          title={StructureNet: Hierarchical Graph Networks for 3D Shape Generation},
+          author={Mo, Kaichun and Guerrero, Paul and Yi, Li and Su, Hao and Wonka, Peter and Mitra, Niloy and Guibas, Leonidas},
+          journal={arXiv preprint arXiv:1908.00575},
+          year={2019}
+    }
 
 ## About this repository
 
