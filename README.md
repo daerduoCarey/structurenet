@@ -23,6 +23,8 @@ Stanford University, University College London (UCL), University of California S
 
 Arxiv Version: https://arxiv.org/abs/1908.00575
 
+Accepted by [Siggraph Asia 2019](https://sa2019.siggraph.org/). See you at Brisbane, Australia in November!
+
 Project Page: https://cs.stanford.edu/~kaichun/structurenet/
 
 ## Citations
