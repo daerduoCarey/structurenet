@@ -73,3 +73,6 @@ To test the model, run
 
 You can use `vis_pc.ipynb` to visualize the point cloud generation results.
 
+## No-edge version (A simpler version)
+
+If you are looking for a simpler starting point, please refer to (https://github.com/daerduoCarey/structedit/blob/master/code/model_structurenet.py)[this] for a no-edge version of the network.
