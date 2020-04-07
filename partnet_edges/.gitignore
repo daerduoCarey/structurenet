@@ -1,0 +1,6 @@
+*.obj
+*.label
+*.pts
+*.png
+results
+tmp
