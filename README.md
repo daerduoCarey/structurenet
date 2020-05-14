@@ -62,4 +62,5 @@ MIT Licence
 ## Updates
 
 * [July 27, 2019] Data and Code released.
+* [May 13, 2020] Release the blender code for rendering figures in the paper.
 
